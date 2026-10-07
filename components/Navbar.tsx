@@ -15,8 +15,8 @@ export function Navbar() {
       </Link>
       <div className="space-x-6 text-sm font-medium text-gray-600 hidden md:block">
         <Link href="/" className="text-black">Products</Link>
-        <Link href="#" className="hover:text-black">Categories</Link>
-        <Link href="#" className="hover:text-black">About</Link>
+        <Link href="/#categories" className="hover:text-black">Categories</Link>
+        <Link href="/about" className="hover:text-black">About</Link>
       </div>
       <div>
         <button 

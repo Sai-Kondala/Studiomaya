@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import Script from "next/script";
 import { ClientProviders } from "@/components/ClientProviders";
+import Footer from "@/components/Footer";
 
 export const metadata: Metadata = {
   title: "Studio Maya",
@@ -15,7 +16,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased">
+      <body className="antialiased flex flex-col min-h-screen bg-gray-50">
         {/* Razorpay script injected securely via Next.js */}
         <Script 
           src="https://checkout.razorpay.com/v1/checkout.js" 
@@ -24,6 +25,7 @@ export default function RootLayout({
         <ClientProviders>
           {children}
         </ClientProviders>
+        <Footer />
       </body>
     </html>
   );
