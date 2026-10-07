@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 
 export async function POST(request: Request) {
   try {
-    const { price, customerName, customerEmail, productId } = await request.json();
+    const { customerName, customerEmail, customerPhone, productId } = await request.json();
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
@@ -17,9 +17,6 @@ export async function POST(request: Request) {
     }
 
     if (
-      typeof price !== 'number' ||
-      !Number.isFinite(price) ||
-      price <= 0 ||
       typeof customerName !== 'string' ||
       !customerName.trim() ||
       typeof customerEmail !== 'string' ||
@@ -45,13 +42,30 @@ export async function POST(request: Request) {
     }
 
     const supabaseAdmin = createSupabaseAdminClient();
+    
+    // Fetch actual price from database to prevent client-side manipulation
+    const { data: product, error: productError } = await supabaseAdmin
+      .from('products')
+      .select('price')
+      .eq('id', productId)
+      .single();
+      
+    if (productError || !product) {
+      return NextResponse.json(
+        { error: 'Product not found or price could not be verified.' },
+        { status: 404 }
+      );
+    }
+    
+    const serverPrice = product.price;
+
     const razorpay = new Razorpay({
       key_id: keyId,
       key_secret: keySecret,
     });
     
     const order = await razorpay.orders.create({
-      amount: Math.round(price * 100), 
+      amount: Math.round(serverPrice * 100), 
       currency: 'INR',
       receipt: `order_${Date.now()}`,
     });
@@ -59,9 +73,10 @@ export async function POST(request: Request) {
     const { error } = await supabaseAdmin.from('orders').insert({
       customer_name: customerName.trim(),
       customer_email: customerEmail.trim(),
+      Customer_Phone: customerPhone ? parseInt(customerPhone.replace(/\\D/g, ''), 10) : null,
       product_id: productId,
       razorpay_order_id: order.id,
-      amount: Math.round(price * 100) / 100,
+      amount: Math.round(serverPrice * 100) / 100,
       status: 'pending',
     });
 

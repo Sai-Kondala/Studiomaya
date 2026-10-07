@@ -1,5 +1,7 @@
 import { supabase } from '../lib/supabase';
 import Link from 'next/link';
+import { Navbar } from '@/components/Navbar';
+import { AddToCartButton } from '@/components/AddToCartButton';
 
 export default async function Home() {
   // Fetch only products marked as 'Published'
@@ -17,20 +19,7 @@ export default async function Home() {
     <main className="min-h-screen bg-gray-50 text-gray-900 font-sans">
       
       {/* Navigation Bar */}
-      <nav className="flex justify-between items-center py-6 px-8 max-w-6xl mx-auto">
-        <div className="font-bold text-xl flex items-center gap-2">
-          <div className="w-6 h-6 bg-black rounded-md"></div>
-          Studio Maya
-        </div>
-        <div className="space-x-6 text-sm font-medium text-gray-600 hidden md:block">
-          <Link href="/" className="text-black">Products</Link>
-          <Link href="#" className="hover:text-black">Categories</Link>
-          <Link href="#" className="hover:text-black">About</Link>
-        </div>
-        <div>
-          <button className="p-2 hover:bg-gray-200 rounded-full">🛒</button>
-        </div>
-      </nav>
+      <Navbar />
 
       {/* Hero Section */}
       <div className="max-w-4xl mx-auto px-8 py-16 flex flex-col md:flex-row items-center gap-12">
@@ -85,19 +74,33 @@ export default async function Home() {
                   {product.short_description || product.description}
                 </p>
                 
-                <div className="mt-auto flex justify-between items-center">
+                <div className="mt-auto flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
                   <div className="flex flex-col">
                     <span className="text-2xl font-bold">₹{product.price}</span>
                     {product.original_price && (
                       <span className="text-sm text-gray-400 line-through">₹{product.original_price}</span>
                     )}
                   </div>
-                  <Link 
-                    href={`/products/${product.id}`}
-                    className="bg-black text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors"
-                  >
-                    View Product →
-                  </Link>
+                  <div className="flex gap-2 w-full sm:w-auto">
+                    <div className="flex-1 sm:flex-none">
+                      <AddToCartButton 
+                        product={{
+                          id: product.id,
+                          name: product.name,
+                          price: product.price,
+                          image_url: product.image_url
+                        }}
+                        variant="outline"
+                        className="w-full flex justify-center"
+                      />
+                    </div>
+                    <Link 
+                      href={`/products/${product.id}`}
+                      className="flex-1 sm:flex-none bg-black text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors whitespace-nowrap text-center flex items-center justify-center"
+                    >
+                      View Product →
+                    </Link>
+                  </div>
                 </div>
               </div>
 

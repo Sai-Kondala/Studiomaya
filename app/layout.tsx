@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Script from "next/script";
+import { ClientProviders } from "@/components/ClientProviders";
 
 export const metadata: Metadata = {
   title: "Studio Maya",
@@ -20,7 +21,9 @@ export default function RootLayout({
           src="https://checkout.razorpay.com/v1/checkout.js" 
           strategy="beforeInteractive" 
         />
-        {children}
+        <ClientProviders>
+          {children}
+        </ClientProviders>
       </body>
     </html>
   );

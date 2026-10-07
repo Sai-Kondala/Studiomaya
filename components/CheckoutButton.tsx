@@ -41,6 +41,7 @@ interface RazorpayOptions {
   prefill: {
     name: string;
     email: string;
+    contact?: string;
   };
 
   theme: {
@@ -102,6 +103,7 @@ export default function CheckoutButton({
   const [showModal, setShowModal] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [email, setEmail] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
   const [loading, setLoading] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(
@@ -149,6 +151,7 @@ export default function CheckoutButton({
           price: product.price,
           customerName,
           customerEmail: email,
+          customerPhone,
           productId: product.id,
         }),
       });
@@ -252,6 +255,7 @@ export default function CheckoutButton({
         prefill: {
           name: customerName,
           email,
+          contact: customerPhone,
         },
 
         /* ---------------------------------------------------
@@ -430,6 +434,31 @@ export default function CheckoutButton({
                         setEmail(e.target.value)
                       }
                       placeholder="you@example.com"
+                      className="w-full border border-gray-200 rounded-lg px-4 py-2.5 focus:outline-none focus:border-black focus:ring-1 focus:ring-black transition-all"
+                    />
+
+                  </div>
+
+                  {/* -------------------------------------------
+                      Phone Number
+                      ------------------------------------------- */}
+
+                  <div className="mb-6 text-left">
+
+                    <label className="block text-sm font-medium mb-1.5 text-gray-700">
+                      Phone Number
+                    </label>
+
+                    <input
+                      type="tel"
+                      required
+                      pattern="[0-9]{10,15}"
+                      title="Please enter a valid phone number"
+                      value={customerPhone}
+                      onChange={(e) =>
+                        setCustomerPhone(e.target.value)
+                      }
+                      placeholder="e.g. 9876543210"
                       className="w-full border border-gray-200 rounded-lg px-4 py-2.5 focus:outline-none focus:border-black focus:ring-1 focus:ring-black transition-all"
                     />
 
