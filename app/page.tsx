@@ -69,6 +69,7 @@ export default async function Home() {
           {products?.map((product) => (
             <div key={product.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col transition-transform hover:-translate-y-1">
               
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img 
                 src={product.image_url} 
                 alt={product.name}
@@ -85,7 +86,12 @@ export default async function Home() {
                 </p>
                 
                 <div className="mt-auto flex justify-between items-center">
-                  <span className="text-2xl font-bold">₹{product.price}</span>
+                  <div className="flex flex-col">
+                    <span className="text-2xl font-bold">₹{product.price}</span>
+                    {product.original_price && (
+                      <span className="text-sm text-gray-400 line-through">₹{product.original_price}</span>
+                    )}
+                  </div>
                   <Link 
                     href={`/products/${product.id}`}
                     className="bg-black text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors"

@@ -15,8 +15,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased">
-        {/* Razorpay script injected securely */}
-        <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="beforeInteractive" />
+        {/* Razorpay script injected securely via Next.js */}
+        <Script 
+          src="https://checkout.razorpay.com/v1/checkout.js" 
+          strategy="beforeInteractive" 
+        />
         {children}
       </body>
     </html>

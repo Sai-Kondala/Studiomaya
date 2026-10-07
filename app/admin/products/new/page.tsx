@@ -16,9 +16,9 @@ export default function AddProduct() {
     const formData = new FormData(e.currentTarget);
     const imageFile = formData.get('image') as File;
     const pdfFile = formData.get('pdf') as File;
+    const originalPrice = formData.get('original_price');
 
     try {
-      // 1. Upload Image to Public Storage
       const imageExt = imageFile.name.split('.').pop();
       const imageName = `${Date.now()}.${imageExt}`;
       const { error: imgError } = await supabase.storage
@@ -31,7 +31,6 @@ export default function AddProduct() {
         .from('product-images')
         .getPublicUrl(imageName);
 
-      // 2. Upload PDF to Private Storage
       const pdfExt = pdfFile.name.split('.').pop();
       const pdfName = `${Date.now()}.${pdfExt}`;
       const { data: pdfData, error: pdfError } = await supabase.storage
@@ -40,17 +39,17 @@ export default function AddProduct() {
 
       if (pdfError) throw pdfError;
 
-      // 3. Save Product details to the Database
       const { error: dbError } = await supabase.from('products').insert({
         name: formData.get('title'),
         short_description: formData.get('short_description'),
         category: formData.get('category'),
         price: formData.get('price'),
+        original_price: originalPrice ? Number(originalPrice) : null, // Saves the M.R.P. if provided
         status: formData.get('status'),
         image_url: imageUrl,
         pdf_url: pdfData?.path,
-        description: '', // Fallback for old schema
-        template_url: '' // Fallback for old schema
+        description: '', 
+        template_url: '' 
       });
 
       if (dbError) throw dbError;
@@ -59,9 +58,9 @@ export default function AddProduct() {
       router.push('/admin/products');
       router.refresh();
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(error);
-      alert('Error uploading product: ' + error.message);
+      alert('Error uploading product: ' + (error as Error).message);
     } finally {
       setLoading(false);
     }
@@ -89,11 +88,17 @@ export default function AddProduct() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-2">Price (INR) *</label>
+              <label className="block text-sm font-medium mb-2">Selling Price (₹) *</label>
               <input type="number" name="price" required className="w-full border rounded-lg px-4 py-2" placeholder="499" />
             </div>
 
+            {/* New Optional M.R.P. Field */}
             <div>
+              <label className="block text-sm font-medium mb-2">M.R.P (Optional Strikethrough) (₹)</label>
+              <input type="number" name="original_price" className="w-full border rounded-lg px-4 py-2" placeholder="899" />
+            </div>
+
+            <div className="col-span-2">
               <label className="block text-sm font-medium mb-2">Category *</label>
               <select name="category" className="w-full border rounded-lg px-4 py-2 bg-white">
                 <option>Notion Templates</option>

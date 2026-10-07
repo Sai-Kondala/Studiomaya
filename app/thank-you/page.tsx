@@ -22,7 +22,7 @@ export default function ThankYouPage() {
         </div>
 
         <p className="text-sm text-gray-500 mb-8">
-          Please check your spam or promotions folder if you don't see the email within a few minutes.
+          Please check your spam or promotions folder if you don&apos;t see the email within a few minutes.
         </p>
         
         <Link 

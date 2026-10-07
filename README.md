@@ -16,6 +16,16 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Payment configuration
+
+Configure these environment variables in `.env.local` for local development and in your deployment environment:
+
+- `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` from the same Razorpay mode (test or live).
+- `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` for the application.
+- `SUPABASE_SERVICE_ROLE_KEY` for server-side order creation and payment updates. Keep this key server-only; do not prefix it with `NEXT_PUBLIC_`.
+
+The `orders` table must include `customer_name`, `customer_email`, `product_id`, `razorpay_order_id`, `amount`, `status`, and `payment_id`. Order statuses are stored as `pending` and `paid`.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
