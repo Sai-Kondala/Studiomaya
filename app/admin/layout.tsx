@@ -17,43 +17,38 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           Studio Maya
         </div>
         <nav className="flex-1 py-6 px-4 space-y-2">
-          <Link 
-            href="/admin/dashboard" 
-            className={`block px-4 py-2 rounded-lg transition-colors ${
-              isActive('/admin/dashboard') ? 'bg-gray-100 text-black font-medium' : 'text-gray-600 hover:bg-gray-50'
-            }`}
+          <Link
+            href="/admin/dashboard"
+            className={`block px-4 py-2 rounded-lg transition-colors ${isActive('/admin/dashboard') ? 'bg-gray-100 text-black font-medium' : 'text-gray-600 hover:bg-gray-50'
+              }`}
           >
             Dashboard
           </Link>
-          <Link 
-            href="/admin/products" 
-            className={`block px-4 py-2 rounded-lg transition-colors ${
-              isActive('/admin/products') ? 'bg-gray-100 text-black font-medium' : 'text-gray-600 hover:bg-gray-50'
-            }`}
+          <Link
+            href="/admin/products"
+            className={`block px-4 py-2 rounded-lg transition-colors ${isActive('/admin/products') ? 'bg-gray-100 text-black font-medium' : 'text-gray-600 hover:bg-gray-50'
+              }`}
           >
             Products
           </Link>
-          <Link 
-            href="/admin/orders" 
-            className={`block px-4 py-2 rounded-lg transition-colors ${
-              isActive('/admin/orders') ? 'bg-gray-100 text-black font-medium' : 'text-gray-600 hover:bg-gray-50'
-            }`}
+          <Link
+            href="/admin/orders"
+            className={`block px-4 py-2 rounded-lg transition-colors ${isActive('/admin/orders') ? 'bg-gray-100 text-black font-medium' : 'text-gray-600 hover:bg-gray-50'
+              }`}
           >
             Orders
           </Link>
-          <Link 
-            href="/admin/customers" 
-            className={`block px-4 py-2 rounded-lg transition-colors ${
-              isActive('/admin/customers') ? 'bg-gray-100 text-black font-medium' : 'text-gray-600 hover:bg-gray-50'
-            }`}
+          <Link
+            href="/admin/customers"
+            className={`block px-4 py-2 rounded-lg transition-colors ${isActive('/admin/customers') ? 'bg-gray-100 text-black font-medium' : 'text-gray-600 hover:bg-gray-50'
+              }`}
           >
             Customers
           </Link>
-          <Link 
-            href="/admin/settings" 
-            className={`block px-4 py-2 rounded-lg transition-colors ${
-              isActive('/admin/settings') ? 'bg-gray-100 text-black font-medium' : 'text-gray-600 hover:bg-gray-50'
-            }`}
+          <Link
+            href="/admin/settings"
+            className={`block px-4 py-2 rounded-lg transition-colors ${isActive('/admin/settings') ? 'bg-gray-100 text-black font-medium' : 'text-gray-600 hover:bg-gray-50'
+              }`}
           >
             Settings
           </Link>
