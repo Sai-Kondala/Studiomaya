@@ -169,14 +169,22 @@ export async function POST(req: Request) {
         }
 
         downloadLinks.push(
-          `<li><a href="${fileUrl}" style="color:#2563eb;text-decoration:none;">
-            <strong>Download PDF File</strong>
-          </a></li>`
+          `<div style="margin-bottom: 15px;">
+            <a href="${fileUrl}" style="display: inline-block; padding: 12px 24px; background-color: #000000; color: #ffffff; text-decoration: none; font-weight: 600; border-radius: 6px; font-size: 16px;">
+              Download PDF File
+            </a>
+          </div>`
         );
       }
       
       if (product.template_url) {
-        downloadLinks.push(`<li><a href="${product.template_url}" style="color: #2563eb; text-decoration: none;"><strong>Access Template</strong></a></li>`);
+        downloadLinks.push(
+          `<div style="margin-bottom: 15px;">
+            <a href="${product.template_url}" style="display: inline-block; padding: 12px 24px; background-color: #000000; color: #ffffff; text-decoration: none; font-weight: 600; border-radius: 6px; font-size: 16px;">
+              Access Template
+            </a>
+          </div>`
+        );
       }
 
       try {
@@ -185,14 +193,22 @@ export async function POST(req: Request) {
           to: updatedOrder.customer_email,
           subject: `Your purchase of ${product.name} is confirmed!`,
           html: `
-            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-              <h1 style="color: #111;">Thank you for your purchase, ${updatedOrder.customer_name}!</h1>
-              <p>We have successfully processed your payment for <strong>${product.name}</strong>.</p>
-              <p>Here are your files:</p>
-              <ul style="line-height: 1.6; padding-left: 20px;">
-                ${downloadLinks.join('\\n')}
-              </ul>
-              <p style="margin-top: 30px; color: #666;">If you have any questions, feel free to reply to this email.</p>
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #ffffff; color: #333333; border: 1px solid #eaeaea; border-radius: 8px;">
+              <div style="text-align: center; margin-bottom: 30px;">
+                <h1 style="color: #111111; font-size: 24px; margin-bottom: 10px;">Thank you for your purchase! 🎉</h1>
+                <p style="font-size: 16px; color: #555555; line-height: 1.5; margin: 0;">
+                  Your payment was successful. Click the button below to download your files for <strong>${product.name}</strong>.
+                </p>
+              </div>
+              
+              <div style="text-align: center; margin-bottom: 30px; padding: 20px; background-color: #f9f9f9; border-radius: 6px;">
+                ${downloadLinks.join('')}
+              </div>
+
+              <div style="text-align: center; font-size: 14px; color: #888888; border-top: 1px solid #eaeaea; padding-top: 20px;">
+                <p>(This secure link will expire in 7 days)</p>
+                <p style="margin-top: 10px;">If you have any questions, feel free to reply to this email.</p>
+              </div>
             </div>
           `,
         });
