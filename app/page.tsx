@@ -35,10 +35,11 @@ export default async function Home() {
           </button>
         </div>
         <div className="flex-1 hidden md:block">
-          {/* Placeholder for the aesthetic hero image */}
-          <div className="w-full h-64 bg-gray-200 rounded-2xl border-4 border-white shadow-xl flex items-center justify-center text-4xl">
-             📓
-          </div>
+          <img 
+            src="/hero_image.jpg" 
+            alt="Notion Workspace" 
+            className="w-full h-auto rounded-2xl shadow-2xl border-4 border-white object-cover"
+          />
         </div>
       </div>
 

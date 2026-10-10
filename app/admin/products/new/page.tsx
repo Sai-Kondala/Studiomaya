@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '../../../../lib/supabase';
 import Link from 'next/link';
+import { createProductAction } from '../actions';
 
 export default function AddProduct() {
   const router = useRouter();
@@ -14,45 +14,9 @@ export default function AddProduct() {
     setLoading(true);
 
     const formData = new FormData(e.currentTarget);
-    const imageFile = formData.get('image') as File;
-    const pdfFile = formData.get('pdf') as File;
-    const originalPrice = formData.get('original_price');
 
     try {
-      const imageExt = imageFile.name.split('.').pop();
-      const imageName = `${Date.now()}.${imageExt}`;
-      const { error: imgError } = await supabase.storage
-        .from('product-images')
-        .upload(imageName, imageFile);
-
-      if (imgError) throw imgError;
-
-      const { data: { publicUrl: imageUrl } } = supabase.storage
-        .from('product-images')
-        .getPublicUrl(imageName);
-
-      const pdfExt = pdfFile.name.split('.').pop();
-      const pdfName = `${Date.now()}.${pdfExt}`;
-      const { data: pdfData, error: pdfError } = await supabase.storage
-        .from('product-files')
-        .upload(pdfName, pdfFile);
-
-      if (pdfError) throw pdfError;
-
-      const { error: dbError } = await supabase.from('products').insert({
-        name: formData.get('title'),
-        short_description: formData.get('short_description'),
-        category: formData.get('category'),
-        price: formData.get('price'),
-        original_price: originalPrice ? Number(originalPrice) : null, // Saves the M.R.P. if provided
-        status: formData.get('status'),
-        image_url: imageUrl,
-        pdf_url: pdfData?.path,
-        description: '', 
-        template_url: '' 
-      });
-
-      if (dbError) throw dbError;
+      await createProductAction(formData);
 
       alert('Product saved successfully!');
       router.push('/admin/products');

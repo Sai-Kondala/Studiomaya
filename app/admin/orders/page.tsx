@@ -5,7 +5,7 @@ export default async function AdminOrders() {
   const supabase = createSupabaseAdminClient();
   const { data: orders, error } = await supabase
     .from('orders')
-    .select('id, customer_name, customer_email, "Customer_Phone", status, amount, created_at, razorpay_order_id, product_id, products(name)')
+    .select('id, customer_name, customer_email, customer_phone, status, amount, created_at, razorpay_order_id')
     .order('created_at', { ascending: false });
 
   return (
@@ -40,7 +40,7 @@ export default async function AdminOrders() {
                   <td className="px-6 py-4 font-medium text-gray-900">ORD-{shortId}</td>
                   <td className="px-6 py-4 text-gray-900">{order.customer_name || '—'}</td>
                   <td className="px-6 py-4 text-gray-500">{order.customer_email || '—'}</td>
-                  <td className="px-6 py-4 text-gray-500">{order.Customer_Phone || '—'}</td>
+                  <td className="px-6 py-4 text-gray-500">{order.customer_phone || '—'}</td>
                   <td className="px-6 py-4">
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${order.status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
                       {order.status || 'Pending'}

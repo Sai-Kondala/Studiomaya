@@ -2,25 +2,32 @@ import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 
 export default async function AdminCustomers() {
   const supabase = createSupabaseAdminClient();
+  
+  // Fetch all orders to extract unique customers
   const { data: orders, error } = await supabase
     .from('orders')
-    .select('customer_email, customer_name, "Customer_Phone", created_at')
+    .select('customer_email, customer_name, customer_phone, created_at')
     .order('created_at', { ascending: false });
 
-  // Derive unique customers from orders
-  const customerMap = new Map();
+  // Deduplicate customers by email
+  const uniqueCustomersMap = new Map();
   if (orders) {
-    orders.forEach(order => {
-      if (order.customer_email && !customerMap.has(order.customer_email)) {
-        customerMap.set(order.customer_email, {
+    for (const order of orders) {
+      if (!order.customer_email) continue;
+      
+      const email = order.customer_email.toLowerCase();
+      if (!uniqueCustomersMap.has(email)) {
+        uniqueCustomersMap.set(email, {
           email: order.customer_email,
-          name: order.customer_name,
-          phone: order.Customer_Phone
+          full_name: order.customer_name,
+          phone: order.customer_phone,
+          created_at: order.created_at
         });
       }
-    });
+    }
   }
-  const customers = Array.from(customerMap.values());
+  
+  const customers = Array.from(uniqueCustomersMap.values());
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -38,14 +45,14 @@ export default async function AdminCustomers() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {customers.map((customer, index) => (
+            {customers?.map((customer, index) => (
               <tr key={index} className="hover:bg-gray-50 cursor-pointer">
-                <td className="px-6 py-4 font-medium text-gray-900">{customer.name || '—'}</td>
+                <td className="px-6 py-4 font-medium text-gray-900">{customer.full_name || '—'}</td>
                 <td className="px-6 py-4 text-gray-500">{customer.email || '—'}</td>
                 <td className="px-6 py-4 text-gray-500">{customer.phone || '—'}</td>
               </tr>
             ))}
-            {customers.length === 0 && (
+            {(!customers || customers.length === 0) && (
               <tr>
                 <td colSpan={3} className="px-6 py-8 text-center text-gray-500">
                   No customers found.

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
+import { updateProductAction } from '../../actions';
 
 interface ProductData {
   id: string;
@@ -49,22 +50,9 @@ export default function EditProduct() {
     setLoading(true);
 
     const formData = new FormData(e.currentTarget);
-    const originalPrice = formData.get('original_price');
 
     try {
-      const { error: dbError } = await supabase
-        .from('products')
-        .update({
-          name: formData.get('title'),
-          short_description: formData.get('short_description'),
-          category: formData.get('category'),
-          price: formData.get('price'),
-          original_price: originalPrice ? Number(originalPrice) : null,
-          status: formData.get('status'),
-        })
-        .eq('id', productId);
-
-      if (dbError) throw dbError;
+      await updateProductAction(productId, formData);
 
       alert('Product updated successfully!');
       router.push('/admin/products');

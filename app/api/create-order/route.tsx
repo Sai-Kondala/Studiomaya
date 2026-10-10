@@ -42,11 +42,11 @@ export async function POST(request: Request) {
     }
 
     const supabaseAdmin = createSupabaseAdminClient();
-    
-    // Fetch actual price from database to prevent client-side manipulation
+
+    // Fetch actual price and name from database to prevent client-side manipulation
     const { data: product, error: productError } = await supabaseAdmin
       .from('products')
-      .select('price')
+      .select('price, name')
       .eq('id', productId)
       .single();
       
@@ -70,20 +70,34 @@ export async function POST(request: Request) {
       receipt: `order_${Date.now()}`,
     });
 
-    const { error } = await supabaseAdmin.from('orders').insert({
+    const { data: orderData, error: insertError } = await supabaseAdmin.from('orders').insert({
       customer_name: customerName.trim(),
       customer_email: customerEmail.trim(),
-      Customer_Phone: customerPhone ? parseInt(customerPhone.replace(/\\D/g, ''), 10) : null,
-      product_id: productId,
+      customer_phone: customerPhone ? customerPhone.trim() : null,
       razorpay_order_id: order.id,
       amount: Math.round(serverPrice * 100) / 100,
       status: 'pending',
-    });
+    }).select('id').single();
 
-    if (error) {
-      console.error('Supabase order insert error:', JSON.stringify(error));
+    if (insertError || !orderData) {
+      console.error('Supabase order insert error:', JSON.stringify(insertError));
       return NextResponse.json(
         { error: 'The payment order could not be saved. Check the orders table columns and server database credentials.' },
+        { status: 500 }
+      );
+    }
+
+    const { error: itemError } = await supabaseAdmin.from('order_items').insert({
+      order_id: orderData.id,
+      product_id: productId,
+      unit_price: serverPrice,
+      product_name_snapshot: product.name
+    });
+
+    if (itemError) {
+      console.error('Supabase order_item insert error:', JSON.stringify(itemError));
+      return NextResponse.json(
+        { error: 'The payment order items could not be saved.' },
         { status: 500 }
       );
     }

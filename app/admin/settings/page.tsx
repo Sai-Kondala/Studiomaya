@@ -1,16 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { supabase } from '@/lib/supabase';
+import { updateSettingsAction } from './actions';
 
 export default function AdminSettings() {
   const [settings, setSettings] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     async function fetchSettings() {
@@ -32,11 +29,25 @@ export default function AdminSettings() {
     return <div className="p-8 text-gray-500">Loading settings...</div>;
   }
 
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setSaving(true);
+    const formData = new FormData(e.currentTarget);
+    try {
+      await updateSettingsAction(formData);
+      alert('Settings saved successfully!');
+    } catch (error: any) {
+      alert(error.message || 'Failed to save settings');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="p-8 max-w-4xl mx-auto pb-24">
       <h1 className="text-2xl font-bold mb-8">Settings</h1>
 
-      <div className="space-y-8">
+      <form onSubmit={handleSubmit} className="space-y-8">
         
         {/* Store Settings */}
         <section className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
@@ -44,23 +55,23 @@ export default function AdminSettings() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-medium mb-1">Store Name</label>
-              <input type="text" className="w-full border rounded-lg p-2" defaultValue={settings?.store_name || 'Studio Maya'} />
+              <input type="text" name="store_name" className="w-full border rounded-lg p-2" defaultValue={settings?.store_name || 'Studio Maya'} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Store Email</label>
-              <input type="email" className="w-full border rounded-lg p-2" defaultValue={settings?.store_email || ''} placeholder="contact@studiomaya.store" />
+              <input type="email" name="store_email" className="w-full border rounded-lg p-2" defaultValue={settings?.store_email || ''} placeholder="contact@studiomaya.store" />
             </div>
             <div className="col-span-2">
               <label className="block text-sm font-medium mb-1">Store Description</label>
-              <textarea className="w-full border rounded-lg p-2" rows={2} defaultValue={settings?.store_description || 'Premium digital workspaces'}></textarea>
+              <textarea name="store_description" className="w-full border rounded-lg p-2" rows={2} defaultValue={settings?.store_description || 'Premium digital workspaces'}></textarea>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Store Phone</label>
-              <input type="tel" className="w-full border rounded-lg p-2" defaultValue={settings?.store_phone || ''} />
+              <input type="tel" name="store_phone" className="w-full border rounded-lg p-2" defaultValue={settings?.store_phone || ''} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Currency</label>
-              <select className="w-full border rounded-lg p-2 bg-white">
+              <select name="currency" className="w-full border rounded-lg p-2 bg-white" defaultValue={settings?.currency || 'INR'}>
                 <option value="INR">INR (₹)</option>
                 <option value="USD">USD ($)</option>
               </select>
@@ -128,12 +139,12 @@ export default function AdminSettings() {
         </section>
 
         <div className="flex justify-end">
-          <button className="bg-black text-white px-6 py-2.5 rounded-xl font-medium hover:bg-gray-800 transition-colors">
-            Save Settings
+          <button type="submit" disabled={saving} className="bg-black text-white px-6 py-2.5 rounded-xl font-medium hover:bg-gray-800 transition-colors disabled:bg-gray-400">
+            {saving ? 'Saving...' : 'Save Settings'}
           </button>
         </div>
 
-      </div>
+      </form>
     </div>
   );
 }

@@ -18,40 +18,15 @@ export async function POST(request: Request) {
 
     const supabaseAdmin = createSupabaseAdminClient();
 
-    // 1. Resolve Customer OR Create new one
-    let customerId = null;
-    if (customerEmail && customerName) {
-      // Upsert customer
-      const { data: existingCustomer } = await supabaseAdmin
-        .from('customers')
-        .select('id')
-        .eq('email', customerEmail.trim())
-        .maybeSingle();
-      
-      if (existingCustomer) {
-        customerId = existingCustomer.id;
-        // Optionally update phone if it was provided
-        if (customerPhone) {
-          await supabaseAdmin.from('customers').update({ phone: customerPhone, full_name: customerName }).eq('id', customerId);
-        }
-      } else {
-        const { data: newCustomer } = await supabaseAdmin
-          .from('customers')
-          .insert({
-            email: customerEmail.trim(),
-            full_name: customerName.trim(),
-            phone: customerPhone || null
-          })
-          .select('id')
-          .single();
-        if (newCustomer) customerId = newCustomer.id;
-      }
+    // 1. Validate inputs
+    if (!customerEmail || !customerName) {
+      return NextResponse.json({ error: 'Customer details are required.' }, { status: 400 });
     }
 
-    // 2. Fetch current prices for all products
+    // 2. Fetch current prices and names for all products
     const { data: products, error: productsError } = await supabaseAdmin
       .from('products')
-      .select('id, price')
+      .select('id, price, name')
       .in('id', productIds);
 
     if (productsError || !products || products.length === 0) {
@@ -69,22 +44,34 @@ export async function POST(request: Request) {
       receipt: `cart_${Date.now()}`,
     });
 
-    // 4. Create order records (one for each product to support existing schema)
-    const orderInserts = products.map(p => ({
+    // 4. Create ONE order record
+    const { data: orderData, error: insertError } = await supabaseAdmin.from('orders').insert({
       customer_name: customerName.trim(),
       customer_email: customerEmail.trim(),
-      Customer_Phone: customerPhone ? parseInt(customerPhone.replace(/\\D/g, ''), 10) : null,
-      product_id: p.id,
+      customer_phone: customerPhone ? customerPhone.trim() : null,
       razorpay_order_id: order.id,
-      amount: p.price,
+      amount: Math.round(totalAmount * 100) / 100,
       status: 'pending',
+    }).select('id').single();
+
+    if (insertError || !orderData) {
+      console.error('Supabase cart order insert error:', JSON.stringify(insertError));
+      return NextResponse.json({ error: 'Failed to save cart order.' }, { status: 500 });
+    }
+
+    // 5. Create order_items
+    const orderItems = products.map(p => ({
+      order_id: orderData.id,
+      product_id: p.id,
+      unit_price: p.price,
+      product_name_snapshot: p.name
     }));
 
-    const { error: insertError } = await supabaseAdmin.from('orders').insert(orderInserts);
+    const { error: itemsError } = await supabaseAdmin.from('order_items').insert(orderItems);
 
-    if (insertError) {
-      console.error('Supabase cart order insert error:', JSON.stringify(insertError));
-      return NextResponse.json({ error: 'Failed to save cart orders.' }, { status: 500 });
+    if (itemsError) {
+      console.error('Supabase order_items insert error:', JSON.stringify(itemsError));
+      return NextResponse.json({ error: 'Failed to save cart order items.' }, { status: 500 });
     }
 
     return NextResponse.json({ orderId: order.id, amount: Math.round(totalAmount * 100), keyId });

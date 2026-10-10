@@ -7,7 +7,7 @@ export default async function DashboardPage() {
   
   const { data: orders } = await supabase
     .from('orders')
-    .select('created_at, amount, product_id, status')
+    .select('created_at, amount, status, order_items(product_id)')
     .eq('status', 'paid'); 
 
   const { data: products } = await supabase
@@ -33,8 +33,12 @@ export default async function DashboardPage() {
     if (products) {
       const productCounts: Record<string, number> = {};
       orders.forEach(order => {
-        if (order.product_id) {
-          productCounts[order.product_id] = (productCounts[order.product_id] || 0) + 1;
+        if (order.order_items && Array.isArray(order.order_items)) {
+          order.order_items.forEach((item: any) => {
+            if (item.product_id) {
+              productCounts[item.product_id] = (productCounts[item.product_id] || 0) + 1;
+            }
+          });
         }
       });
 

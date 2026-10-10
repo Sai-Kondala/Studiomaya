@@ -58,6 +58,26 @@ export async function POST(req: Request) {
     }
 
     const supabaseAdmin = createSupabaseAdminClient();
+
+    // Check if order is already paid to prevent duplicate emails
+    const { data: existingOrder, error: checkError } = await supabaseAdmin
+      .from('orders')
+      .select('id, status, customer_email, customer_name')
+      .eq('razorpay_order_id', razorpay_order_id)
+      .single();
+
+    if (checkError && checkError.code !== 'PGRST116') {
+      console.error('Supabase status check error:', JSON.stringify(checkError));
+      return NextResponse.json(
+        { error: 'Could not verify existing order status.' },
+        { status: 500 }
+      );
+    }
+
+    if (existingOrder && existingOrder.status === 'paid') {
+      return NextResponse.json({ success: true, message: 'Payment already verified' }, { status: 200 });
+    }
+
     const { data: updatedOrder, error: dbError } = await supabaseAdmin
       .from('orders')
       .update({ 
@@ -65,7 +85,7 @@ export async function POST(req: Request) {
         razorpay_payment_id: razorpay_payment_id 
       })
       .eq('razorpay_order_id', razorpay_order_id)
-      .select('customer_email, customer_name, product_id, razorpay_order_id')
+      .select('id, customer_email, customer_name')
       .maybeSingle();
 
     if (dbError) {
@@ -84,18 +104,32 @@ export async function POST(req: Request) {
       );
     }
 
-    // Fetch product details to send in email
+    // Fetch product details from order_items
+    const { data: orderItems } = await supabaseAdmin
+      .from('order_items')
+      .select('product_id')
+      .eq('order_id', updatedOrder.id)
+      .single();
+
+    if (!orderItems) {
+      return NextResponse.json(
+        { error: 'Payment verified, but order items could not be retrieved.' },
+        { status: 500 }
+      );
+    }
+
     const { data: product } = await supabaseAdmin
       .from('products')
       .select('name, template_url, pdf_url')
-      .eq('id', updatedOrder.product_id)
+      .eq('id', orderItems.product_id)
       .single();
 
     if (product && updatedOrder.customer_email) {
-      const downloadLinks = [];
+      const downloadLinks: string[] = [];
       
       if (product.pdf_url) {
-        const fileUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/product-files/${product.pdf_url}`;
+        const baseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
+        const fileUrl = `${baseUrl}/storage/v1/object/public/product-files/${product.pdf_url}`;
         downloadLinks.push(`<li><a href="${fileUrl}" style="color: #2563eb; text-decoration: none;"><strong>Download PDF File</strong></a></li>`);
       }
       
@@ -103,22 +137,26 @@ export async function POST(req: Request) {
         downloadLinks.push(`<li><a href="${product.template_url}" style="color: #2563eb; text-decoration: none;"><strong>Access Template</strong></a></li>`);
       }
 
-      await resend.emails.send({
-        from: process.env.EMAIL_FROM_ADDRESS || 'onboarding@resend.dev',
-        to: updatedOrder.customer_email,
-        subject: `Your purchase of ${product.name} is confirmed!`,
-        html: `
-          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-            <h1 style="color: #111;">Thank you for your purchase, ${updatedOrder.customer_name}!</h1>
-            <p>We have successfully processed your payment for <strong>${product.name}</strong>.</p>
-            <p>Here are your files:</p>
-            <ul style="line-height: 1.6; padding-left: 20px;">
-              ${downloadLinks.join('\\n')}
-            </ul>
-            <p style="margin-top: 30px; color: #666;">If you have any questions, feel free to reply to this email.</p>
-          </div>
-        `,
-      });
+      try {
+        await resend.emails.send({
+          from: process.env.EMAIL_FROM_ADDRESS || 'onboarding@resend.dev',
+          to: updatedOrder.customer_email,
+          subject: `Your purchase of ${product.name} is confirmed!`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+              <h1 style="color: #111;">Thank you for your purchase, ${updatedOrder.customer_name}!</h1>
+              <p>We have successfully processed your payment for <strong>${product.name}</strong>.</p>
+              <p>Here are your files:</p>
+              <ul style="line-height: 1.6; padding-left: 20px;">
+                ${downloadLinks.join('\\n')}
+              </ul>
+              <p style="margin-top: 30px; color: #666;">If you have any questions, feel free to reply to this email.</p>
+            </div>
+          `,
+        });
+      } catch (emailError) {
+        console.error('Payment verified, but email failed to send:', emailError);
+      }
     }
 
     return NextResponse.json({ success: true, message: 'Payment verified successfully' }, { status: 200 });

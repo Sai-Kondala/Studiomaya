@@ -34,6 +34,9 @@ export default function AdminLogin() {
       
       // Use a hard redirect to force the server to evaluate the new cookie
       window.location.href = '/admin';
+    } else {
+      setError('Please check your email to verify your account before logging in.');
+      setLoading(false);
     }
   };
 

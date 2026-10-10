@@ -101,6 +101,11 @@ export default function CartCheckoutPage() {
         theme: {
           color: '#000000',
         },
+        modal: {
+          ondismiss: function() {
+            setLoading(false);
+          }
+        }
       };
 
       const rzp = new (window as any).Razorpay(options);
@@ -111,7 +116,6 @@ export default function CartCheckoutPage() {
       
     } catch (err: any) {
       setError(err.message || 'Something went wrong');
-    } finally {
       setLoading(false);
     }
   };

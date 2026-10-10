@@ -1,0 +1,127 @@
+import { POST } from '@/app/api/verify-payment/route';
+import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
+import crypto from 'crypto';
+import { Resend } from 'resend';
+
+jest.mock('@/lib/supabaseAdmin', () => ({
+  createSupabaseAdminClient: jest.fn(),
+}));
+
+jest.mock('resend', () => ({
+  Resend: jest.fn().mockImplementation(() => ({
+    emails: {
+      send: jest.fn().mockResolvedValue({ id: 'email_123' }),
+    },
+  })),
+}));
+
+describe('POST /api/verify-payment', () => {
+  let mockSupabase: any;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.RAZORPAY_KEY_SECRET = 'test_secret';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://localhost';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'test_role_key';
+
+    mockSupabase = {
+      from: jest.fn(),
+    };
+
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(mockSupabase);
+  });
+
+  const createRequest = (body: any) => {
+    return new Request('http://localhost/api/verify-payment', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+  };
+
+  const generateSignature = (orderId: string, paymentId: string) => {
+    return crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET!)
+      .update(`${orderId}|${paymentId}`)
+      .digest('hex');
+  };
+
+  it('should verify payment successfully', async () => {
+    const validSignature = generateSignature('order_rzp_123', 'pay_123');
+
+    const mockFrom = mockSupabase.from as jest.Mock;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({ data: { id: 'order_123', status: 'pending', customer_email: 'test@example.com' }, error: null }),
+            }),
+          }),
+          update: () => ({
+            eq: () => ({
+              select: () => ({
+                maybeSingle: () => Promise.resolve({ data: { id: 'order_123', status: 'paid', customer_email: 'test@example.com' }, error: null })
+              })
+            })
+          }),
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { product_id: 'prod_1' },
+                error: null,
+              })
+            }),
+          }),
+        };
+      }
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { name: 'Test Product', file_url: 'http://download.link' },
+                error: null,
+              })
+            })
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      razorpay_order_id: 'order_rzp_123',
+      razorpay_payment_id: 'pay_123',
+      razorpay_signature: validSignature,
+      productId: 'prod_1',
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+  });
+
+  it('should fail with invalid signature', async () => {
+    const req = createRequest({
+      razorpay_order_id: 'order_rzp_123',
+      razorpay_payment_id: 'pay_123',
+      razorpay_signature: 'a'.repeat(64),
+      productId: 'prod_1',
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe('Razorpay signature did not match. Check that the server secret belongs to the same Razorpay key used at checkout.');
+  });
+});

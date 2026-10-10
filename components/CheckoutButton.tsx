@@ -47,6 +47,10 @@ interface RazorpayOptions {
   theme: {
     color: string;
   };
+
+  modal?: {
+    ondismiss?: () => void;
+  };
 }
 
 interface RazorpayConstructor {
@@ -265,6 +269,16 @@ export default function CheckoutButton({
         theme: {
           color: '#000000',
         },
+
+        /* ---------------------------------------------------
+           Modal Configuration
+           --------------------------------------------------- */
+        
+        modal: {
+          ondismiss: function() {
+            setLoading(false);
+          }
+        }
       };
 
       /* -----------------------------------------------------
