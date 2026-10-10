@@ -34,7 +34,7 @@ export default async function AdminOrders() {
               // Extract a short ID for display
               const shortId = order.id ? order.id.split('-')[0].toUpperCase() : 'N/A';
               const date = new Date(order.created_at).toLocaleDateString('en-IN', {
-                year: 'numeric', month: 'short', day: 'numeric'
+                year: 'numeric', month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata'
               });
 
               return (
