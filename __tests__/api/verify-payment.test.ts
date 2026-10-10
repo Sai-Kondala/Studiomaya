@@ -26,6 +26,11 @@ describe('POST /api/verify-payment', () => {
 
     mockSupabase = {
       from: jest.fn(),
+      storage: {
+        from: jest.fn().mockReturnValue({
+          createSignedUrl: jest.fn().mockResolvedValue({ data: { signedUrl: 'http://signed.url' }, error: null }),
+        }),
+      },
     };
 
     (createSupabaseAdminClient as jest.Mock).mockReturnValue(mockSupabase);
@@ -72,11 +77,9 @@ describe('POST /api/verify-payment', () => {
       if (table === 'order_items') {
         return {
           select: () => ({
-            eq: () => ({
-              single: () => Promise.resolve({
-                data: { product_id: 'prod_1' },
-                error: null,
-              })
+            eq: () => Promise.resolve({
+              data: [{ product_id: 'prod_1' }],
+              error: null,
             }),
           }),
         };
@@ -86,7 +89,7 @@ describe('POST /api/verify-payment', () => {
           select: () => ({
             eq: () => ({
               single: () => Promise.resolve({
-                data: { name: 'Test Product', file_url: 'http://download.link' },
+                data: { name: 'Test Product', pdf_url: 'test.pdf' },
                 error: null,
               })
             })

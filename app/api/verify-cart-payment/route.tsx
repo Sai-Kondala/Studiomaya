@@ -5,6 +5,28 @@ import { Resend } from 'resend';
 
 const resend = new Resend(process.env.EMAIL_PROVIDER_API_KEY);
 
+async function createProductDownloadUrl(
+  supabaseAdmin: ReturnType<typeof createSupabaseAdminClient>,
+  pdfPath: string
+) {
+  const normalizedPath = pdfPath.replace(/^\/+/, '');
+
+  const { data, error } = await supabaseAdmin.storage
+    .from('product-files')
+    .createSignedUrl(
+      normalizedPath,
+      60 * 60 * 24 * 7,
+      { download: true }
+    );
+
+  if (error || !data?.signedUrl) {
+    console.error('Failed to create download link:', error?.message);
+    return null;
+  }
+
+  return data.signedUrl;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -113,17 +135,33 @@ export async function POST(req: Request) {
     if (products && products.length > 0 && updatedOrder.customer_email) {
       const downloadLinks: string[] = [];
 
-      products.forEach(product => {
+      for (const product of products) {
         downloadLinks.push(`<h3 style="margin-bottom: 5px;">${product.name}</h3>`);
         if (product.pdf_url) {
-          const baseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
-          const fileUrl = `${baseUrl}/storage/v1/object/public/product-files/${product.pdf_url}`;
-          downloadLinks.push(`<li><a href="${fileUrl}" style="color: #2563eb; text-decoration: none;"><strong>Download PDF File</strong></a></li>`);
+          const fileUrl = await createProductDownloadUrl(
+            supabaseAdmin,
+            product.pdf_url
+          );
+
+          if (!fileUrl) {
+            return NextResponse.json(
+              {
+                error: `Download link generation failed for ${product.name}.`
+              },
+              { status: 500 }
+            );
+          }
+
+          downloadLinks.push(
+            `<li><a href="${fileUrl}" style="color:#2563eb;text-decoration:none;">
+              <strong>Download PDF File</strong>
+            </a></li>`
+          );
         }
         if (product.template_url) {
           downloadLinks.push(`<li><a href="${product.template_url}" style="color: #2563eb; text-decoration: none;"><strong>Access Template</strong></a></li>`);
         }
-      });
+      }
 
       try {
         await resend.emails.send({

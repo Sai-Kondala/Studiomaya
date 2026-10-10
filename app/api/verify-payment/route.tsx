@@ -5,6 +5,28 @@ import { Resend } from 'resend';
 
 const resend = new Resend(process.env.EMAIL_PROVIDER_API_KEY);
 
+async function createProductDownloadUrl(
+  supabaseAdmin: ReturnType<typeof createSupabaseAdminClient>,
+  pdfPath: string
+) {
+  const normalizedPath = pdfPath.replace(/^\/+/, '');
+
+  const { data, error } = await supabaseAdmin.storage
+    .from('product-files')
+    .createSignedUrl(
+      normalizedPath,
+      60 * 60 * 24 * 7,
+      { download: true }
+    );
+
+  if (error || !data?.signedUrl) {
+    console.error('Failed to create download link:', error?.message);
+    return null;
+  }
+
+  return data.signedUrl;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -105,15 +127,19 @@ export async function POST(req: Request) {
     }
 
     // Fetch product details from order_items
-    const { data: orderItems } = await supabaseAdmin
+    const { data: orderItems, error: itemsError } = await supabaseAdmin
       .from('order_items')
       .select('product_id')
-      .eq('order_id', updatedOrder.id)
-      .single();
+      .eq('order_id', updatedOrder.id);
 
-    if (!orderItems) {
+    if (
+      itemsError ||
+      !orderItems ||
+      orderItems.length !== 1 ||
+      !orderItems[0]?.product_id
+    ) {
       return NextResponse.json(
-        { error: 'Payment verified, but order items could not be retrieved.' },
+        { error: 'Order items could not be retrieved.' },
         { status: 500 }
       );
     }
@@ -121,16 +147,32 @@ export async function POST(req: Request) {
     const { data: product } = await supabaseAdmin
       .from('products')
       .select('name, template_url, pdf_url')
-      .eq('id', orderItems.product_id)
+      .eq('id', orderItems[0].product_id)
       .single();
 
     if (product && updatedOrder.customer_email) {
       const downloadLinks: string[] = [];
       
       if (product.pdf_url) {
-        const baseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
-        const fileUrl = `${baseUrl}/storage/v1/object/public/product-files/${product.pdf_url}`;
-        downloadLinks.push(`<li><a href="${fileUrl}" style="color: #2563eb; text-decoration: none;"><strong>Download PDF File</strong></a></li>`);
+        const fileUrl = await createProductDownloadUrl(
+          supabaseAdmin,
+          product.pdf_url
+        );
+
+        if (!fileUrl) {
+          return NextResponse.json(
+            {
+              error: 'Download link generation failed. Please contact support.'
+            },
+            { status: 500 }
+          );
+        }
+
+        downloadLinks.push(
+          `<li><a href="${fileUrl}" style="color:#2563eb;text-decoration:none;">
+            <strong>Download PDF File</strong>
+          </a></li>`
+        );
       }
       
       if (product.template_url) {

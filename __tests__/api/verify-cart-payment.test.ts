@@ -25,6 +25,11 @@ describe('POST /api/verify-cart-payment', () => {
 
     mockSupabase = {
       from: jest.fn(),
+      storage: {
+        from: jest.fn().mockReturnValue({
+          createSignedUrl: jest.fn().mockResolvedValue({ data: { signedUrl: 'http://signed.url' }, error: null }),
+        }),
+      },
     };
 
     (createSupabaseAdminClient as jest.Mock).mockReturnValue(mockSupabase);
@@ -83,8 +88,8 @@ describe('POST /api/verify-cart-payment', () => {
           select: () => ({
             in: () => Promise.resolve({
               data: [
-                { name: 'Product 1', file_url: 'http://link1' },
-                { name: 'Product 2', file_url: 'http://link2' }
+                { name: 'Product 1', pdf_url: 'test1.pdf' },
+                { name: 'Product 2', pdf_url: 'test2.pdf' }
               ],
               error: null,
             }),
