@@ -2,6 +2,9 @@ import { supabase } from '../lib/supabase';
 import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { AddToCartButton } from '@/components/AddToCartButton';
+import { getProductPrimaryImage } from '@/lib/productUtils';
+
+export const dynamic = 'force-dynamic';
 
 export default async function Home() {
   // Fetch only products marked as 'Published'
@@ -56,45 +59,47 @@ export default async function Home() {
 
         {/* Dynamic Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {products?.map((product) => (
-            <div key={product.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col transition-transform hover:-translate-y-1">
-              
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img 
-                src={product.image_url} 
-                alt={product.name}
-                className="w-full h-52 object-cover border-b border-gray-100"
-              />
-              
-              <div className="p-6 flex flex-col flex-1">
-                <h2 className="text-xl font-bold mb-1">{product.name}</h2>
-                <div className="flex items-center gap-1 mb-3 text-sm text-gray-500">
-                  <span className="text-yellow-400">★</span> 5.0 (New)
-                </div>
-                <p className="text-gray-500 text-sm mb-6 line-clamp-2">
-                  {product.short_description || product.description}
-                </p>
+          {products?.map((product) => {
+            const primaryImage = getProductPrimaryImage(product.image_url);
+            return (
+              <div key={product.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col transition-transform hover:-translate-y-1">
                 
-                <div className="mt-auto flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-                  <div className="flex flex-col">
-                    <span className="text-2xl font-bold">₹{product.price}</span>
-                    {product.original_price && (
-                      <span className="text-sm text-gray-400 line-through">₹{product.original_price}</span>
-                    )}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img 
+                  src={primaryImage || 'https://via.placeholder.com/400x300'} 
+                  alt={product.name}
+                  className="w-full h-52 object-cover border-b border-gray-100"
+                />
+                
+                <div className="p-6 flex flex-col flex-1">
+                  <h2 className="text-xl font-bold mb-1">{product.name}</h2>
+                  <div className="flex items-center gap-1 mb-3 text-sm text-gray-500">
+                    <span className="text-yellow-400">★</span> 5.0 (New)
                   </div>
-                  <div className="flex gap-2 w-full sm:w-auto">
-                    <div className="flex-1 sm:flex-none">
-                      <AddToCartButton 
-                        product={{
-                          id: product.id,
-                          name: product.name,
-                          price: product.price,
-                          image_url: product.image_url
-                        }}
-                        variant="outline"
-                        className="w-full flex justify-center"
-                      />
+                  <p className="text-gray-500 text-sm mb-6 line-clamp-2">
+                    {product.short_description || product.description}
+                  </p>
+                  
+                  <div className="mt-auto flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+                    <div className="flex flex-col">
+                      <span className="text-2xl font-bold">₹{product.price}</span>
+                      {product.original_price && (
+                        <span className="text-sm text-gray-400 line-through">₹{product.original_price}</span>
+                      )}
                     </div>
+                    <div className="flex gap-2 w-full sm:w-auto">
+                      <div className="flex-1 sm:flex-none">
+                        <AddToCartButton 
+                          product={{
+                            id: product.id,
+                            name: product.name,
+                            price: product.price,
+                            image_url: primaryImage
+                          }}
+                          variant="outline"
+                          className="w-full flex justify-center"
+                        />
+                      </div>
                     <Link 
                       href={`/products/${product.id}`}
                       className="flex-1 sm:flex-none bg-black text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors whitespace-nowrap text-center flex items-center justify-center"
@@ -106,7 +111,8 @@ export default async function Home() {
               </div>
 
             </div>
-          ))}
+            );
+          })}
           {(!products || products.length === 0) && (
             <div className="col-span-3 text-center py-12 text-gray-500">
               No products published yet.

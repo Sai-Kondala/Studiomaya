@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
+import { getProductPrimaryImage } from '@/lib/productUtils';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,10 +35,12 @@ export default async function AdminProducts() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {products?.map((product) => (
+            {products?.map((product) => {
+              const primaryImage = getProductPrimaryImage(product.image_url);
+              return (
               <tr key={product.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4">
-                  <img src={product.image_url || 'https://via.placeholder.com/40'} alt={product.name} className="w-10 h-10 rounded object-cover border" />
+                  <img src={primaryImage || 'https://via.placeholder.com/40'} alt={product.name} className="w-10 h-10 rounded object-cover border" />
                 </td>
                 <td className="px-6 py-4 font-medium text-gray-900">{product.name}</td>
                 
@@ -63,7 +66,8 @@ export default async function AdminProducts() {
                   </Link>
                 </td>
               </tr>
-            ))}
+            );
+          })}
             {(!products || products.length === 0) && (
               <tr>
                 <td colSpan={6} className="px-6 py-8 text-center text-gray-500">No products found.</td>

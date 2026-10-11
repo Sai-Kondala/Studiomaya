@@ -2,6 +2,8 @@ import { supabase } from '../../../lib/supabase';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import CheckoutButton from '../../../components/CheckoutButton';
+import ProductGallery from '../../../components/ProductGallery';
+import { getProductImages, getProductPrimaryImage } from '@/lib/productUtils';
 
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   // 1. Await the params first (Required in newer Next.js versions)
@@ -19,6 +21,8 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   }
 
   const rzpKeyId = process.env.RAZORPAY_KEY_ID!;
+  const images = getProductImages(product.image_url);
+  const primaryImage = getProductPrimaryImage(product.image_url);
 
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900 font-sans pb-24">
@@ -39,20 +43,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       <div className="max-w-6xl mx-auto px-8 grid grid-cols-1 md:grid-cols-2 gap-16">
         
         {/* Left Column: Image Gallery */}
-        <div className="space-y-4">
-          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm aspect-video flex items-center justify-center">
-            <img src={product.image_url} alt={product.name} className="w-full h-full object-cover" />
-          </div>
-          {/* Thumbnail placeholders to match the design */}
-          <div className="flex gap-4">
-            <div className="w-24 h-16 bg-white border-2 border-black rounded-lg overflow-hidden cursor-pointer">
-              <img src={product.image_url} alt="thumbnail" className="w-full h-full object-cover" />
-            </div>
-            <div className="w-24 h-16 bg-white border border-gray-200 rounded-lg overflow-hidden opacity-50 cursor-pointer">
-              <img src={product.image_url} alt="thumbnail" className="w-full h-full object-cover" />
-            </div>
-          </div>
-        </div>
+        <ProductGallery images={images} productName={product.name} />
 
         {/* Right Column: Checkout & Details */}
         <div className="flex flex-col justify-center">
@@ -87,7 +78,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
           {/* Using our existing CheckoutButton for now */}
           <div className="w-full h-14">
-            <CheckoutButton product={product} rzpKeyId={rzpKeyId} />
+            <CheckoutButton product={{ ...product, image_url: primaryImage }} rzpKeyId={rzpKeyId} />
           </div>
         </div>
       </div>
