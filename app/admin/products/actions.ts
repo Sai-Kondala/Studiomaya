@@ -2,6 +2,7 @@
 
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import { cookies } from 'next/headers';
+import { revalidatePath } from 'next/cache';
 
 async function checkAdmin() {
   const cookieStore = await cookies();
@@ -83,6 +84,9 @@ export async function createProductAction(formData: FormData) {
 
   if (dbError) throw new Error(dbError.message);
 
+  revalidatePath('/admin/products');
+  revalidatePath('/');
+
   return { success: true };
 }
 
@@ -132,6 +136,10 @@ export async function updateProductAction(id: string, formData: FormData) {
   const { error: dbError } = await supabaseAdmin.from('products').update(updates).eq('id', id);
 
   if (dbError) throw new Error(dbError.message);
+
+  revalidatePath('/admin/products');
+  revalidatePath('/');
+  revalidatePath(`/products/${id}`);
 
   return { success: true };
 }
