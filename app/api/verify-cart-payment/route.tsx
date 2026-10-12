@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import { linkOrCreateCustomer } from '@/lib/customer';
 import { clearUserCart } from '@/lib/cartService';
+import { generateThermalReceiptEmailHtml, EmailDownloadLink, EmailReceiptItem } from '@/lib/emailReceiptTemplate';
 import { Resend } from 'resend';
 
 const resend = new Resend(process.env.EMAIL_PROVIDER_API_KEY);
@@ -103,7 +104,7 @@ export async function POST(req: Request) {
       .from('orders')
       .update(updatePayload)
       .eq('razorpay_order_id', razorpay_order_id)
-      .select('id, customer_email, customer_name, customer_phone');
+      .select('id, amount, customer_email, customer_name, customer_phone');
 
     let { data: updatedOrder, error: dbError } = typeof selectQuery.maybeSingle === 'function'
       ? await selectQuery.maybeSingle()
@@ -121,7 +122,7 @@ export async function POST(req: Request) {
         .from('orders')
         .update(updatePayload)
         .eq('razorpay_order_id', razorpay_order_id)
-        .select('id, customer_email, customer_name, customer_phone');
+        .select('id, amount, customer_email, customer_name, customer_phone');
       const retry = typeof retryQuery.maybeSingle === 'function'
         ? await retryQuery.maybeSingle()
         : await retryQuery.single();
@@ -187,7 +188,7 @@ export async function POST(req: Request) {
     // Fetch order items to deliver products
     const { data: orderItems, error: itemsError } = await supabaseAdmin
       .from('order_items')
-      .select('product_id')
+      .select('product_id, unit_price, product_name_snapshot')
       .eq('order_id', updatedOrder.id);
 
     if (itemsError || !orderItems || orderItems.length === 0) {
@@ -200,16 +201,13 @@ export async function POST(req: Request) {
     const productIds = orderItems.map(item => item.product_id);
     const { data: products } = await supabaseAdmin
       .from('products')
-      .select('id, name, template_url, pdf_url')
+      .select('id, name, price, template_url, pdf_url')
       .in('id', productIds);
 
     if (products && products.length > 0 && updatedOrder.customer_email) {
-      const downloadLinks: string[] = [];
+      const downloadLinks: EmailDownloadLink[] = [];
 
       for (const product of products) {
-        downloadLinks.push(`<div style="background-color: #f9f9f9; padding: 20px; border-radius: 6px; margin-bottom: 20px; text-align: center;">`);
-        downloadLinks.push(`<h3 style="margin-top: 0; margin-bottom: 15px; color: #111111; font-size: 18px;">${product.name}</h3>`);
-        
         if (product.pdf_url) {
           const fileUrl = await createProductDownloadUrl(
             supabaseAdmin,
@@ -225,50 +223,49 @@ export async function POST(req: Request) {
             );
           }
 
-          downloadLinks.push(
-            `<div style="margin-bottom: 10px;">
-              <a href="${fileUrl}" style="display: inline-block; padding: 10px 20px; background-color: #000000; color: #ffffff; text-decoration: none; font-weight: 600; border-radius: 6px; font-size: 15px;">
-                Download PDF File
-              </a>
-            </div>`
-          );
+          downloadLinks.push({
+            productName: product.name,
+            url: fileUrl,
+            type: 'pdf',
+          });
         }
         if (product.template_url) {
-          downloadLinks.push(
-            `<div style="margin-bottom: 10px;">
-              <a href="${product.template_url}" style="display: inline-block; padding: 10px 20px; background-color: #000000; color: #ffffff; text-decoration: none; font-weight: 600; border-radius: 6px; font-size: 15px;">
-                Access Template
-              </a>
-            </div>`
-          );
+          downloadLinks.push({
+            productName: product.name,
+            url: product.template_url,
+            type: 'template',
+          });
         }
-        downloadLinks.push(`</div>`);
       }
+
+      const receiptItems: EmailReceiptItem[] = orderItems.map((item) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const raw = item as any;
+        const prod = products.find((p) => p.id === raw.product_id);
+        return {
+          name: raw.product_name_snapshot || prod?.name || 'Digital Product',
+          price: Number(raw.unit_price) || prod?.price || 0,
+        };
+      });
+
+      const shortId = updatedOrder.id ? updatedOrder.id.split('-')[0].toUpperCase() : 'ORD';
+      const orderAmt = Number(updatedOrder.amount) || receiptItems.reduce((acc, i) => acc + i.price, 0);
+
+      const emailHtml = generateThermalReceiptEmailHtml({
+        orderNumber: `ORD-${shortId}`,
+        customerName: updatedOrder.customer_name || 'Valued Creator',
+        customerEmail: updatedOrder.customer_email,
+        items: receiptItems,
+        totalAmount: orderAmt,
+        downloadLinks,
+      });
 
       try {
         await resend.emails.send({
           from: process.env.EMAIL_FROM_ADDRESS || 'onboarding@resend.dev',
           to: updatedOrder.customer_email,
-          subject: `Your purchase from Studio Maya is confirmed!`,
-          html: `
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #ffffff; color: #333333; border: 1px solid #eaeaea; border-radius: 8px;">
-              <div style="text-align: center; margin-bottom: 30px;">
-                <h1 style="color: #111111; font-size: 24px; margin-bottom: 10px;">Thank you for your purchase! 🎉</h1>
-                <p style="font-size: 16px; color: #555555; line-height: 1.5; margin: 0;">
-                  Your payment was successful. Click the buttons below to access your digital products.
-                </p>
-              </div>
-              
-              <div style="margin-bottom: 30px;">
-                ${downloadLinks.join('')}
-              </div>
-
-              <div style="text-align: center; font-size: 14px; color: #888888; border-top: 1px solid #eaeaea; padding-top: 20px;">
-                <p>(These secure links will expire in 7 days)</p>
-                <p style="margin-top: 10px;">If you have any questions, feel free to reply to this email.</p>
-              </div>
-            </div>
-          `,
+          subject: `Your receipt from Studio Maya — ORD-${shortId}`,
+          html: emailHtml,
         });
       } catch (emailError) {
         console.error('Payment verified, but email failed to send:', emailError);
