@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Clock, ShieldCheck } from 'lucide-react';
 
 export default function CartCheckoutPage() {
-  const { cart, clearCart, user } = useCart();
+  const { cart, clearCart, user, isUserLoading } = useCart();
   const router = useRouter();
 
   const [formData, setFormData] = useState({
@@ -28,11 +28,16 @@ export default function CartCheckoutPage() {
   const subtotal = cart.reduce((acc, item) => acc + item.price, 0);
 
   useEffect(() => {
+    // If not loading and user is not logged in, redirect to login first
+    if (!isUserLoading && !user && !isSuccess && !isVerifying) {
+      router.push('/login?next=/cart-checkout');
+      return;
+    }
     // If cart is empty and not verifying/succeeded, redirect to home
     if (cart.length === 0 && !isVerifying && !isSuccess) {
       router.push('/');
     }
-  }, [cart, router, isVerifying, isSuccess]);
+  }, [user, isUserLoading, cart, router, isVerifying, isSuccess]);
 
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();

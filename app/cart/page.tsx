@@ -8,7 +8,7 @@ import { Navbar } from '@/components/Navbar';
 import { Clock, ShoppingBag, ArrowRight } from 'lucide-react';
 
 export default function CartPage() {
-  const { cart, removeFromCart } = useCart();
+  const { cart, removeFromCart, user } = useCart();
   const router = useRouter();
 
   const subtotal = cart.reduce((total, item) => total + item.price, 0);
@@ -84,8 +84,14 @@ export default function CartPage() {
               </div>
 
               <button
-                onClick={() => router.push('/cart-checkout')}
-                className="w-full bg-black text-white px-6 py-4 rounded-xl font-medium hover:bg-gray-800 transition-colors flex items-center justify-center gap-2 text-sm shadow-sm"
+                onClick={() => {
+                  if (!user) {
+                    router.push('/login?next=/cart-checkout');
+                    return;
+                  }
+                  router.push('/cart-checkout');
+                }}
+                className="w-full bg-black text-white px-6 py-4 rounded-xl font-medium hover:bg-gray-800 transition-colors flex items-center justify-center gap-2 text-sm shadow-sm cursor-pointer"
               >
                 <span>Proceed to Checkout</span>
                 <ArrowRight className="w-4 h-4" />

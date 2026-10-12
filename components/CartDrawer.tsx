@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Clock } from 'lucide-react';
 
 export function CartDrawer() {
-  const { cart, removeFromCart, isCartOpen, setIsCartOpen } = useCart();
+  const { cart, removeFromCart, isCartOpen, setIsCartOpen, user } = useCart();
   const router = useRouter();
 
   if (!isCartOpen) return null;
@@ -16,6 +16,10 @@ export function CartDrawer() {
 
   const handleCheckout = () => {
     setIsCartOpen(false);
+    if (!user) {
+      router.push('/login?next=/cart-checkout');
+      return;
+    }
     router.push('/cart-checkout');
   };
 

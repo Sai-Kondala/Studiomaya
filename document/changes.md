@@ -264,3 +264,21 @@ Snapshots:   0 total
 3. **Resilient Order Creation & PostgREST Schema Fallback**:
    - Enhanced the column fallback in [`app/api/create-order/route.tsx`](file:///d:/Notion/digital-store/app/api/create-order/route.tsx), [`app/api/cart-checkout/route.tsx`](file:///d:/Notion/digital-store/app/api/cart-checkout/route.tsx), [`app/api/verify-payment/route.tsx`](file:///d:/Notion/digital-store/app/api/verify-payment/route.tsx), and [`app/api/verify-cart-payment/route.tsx`](file:///d:/Notion/digital-store/app/api/verify-cart-payment/route.tsx) to catch PostgREST `PGRST204` schema cache errors when `user_id` is not yet applied to the remote `orders` table. Order creation and payment verification succeed smoothly without 500 errors.
 
+---
+
+## 6. Standalone Thermal Printer & Product View Upgrades
+
+1. **Standalone Hanging Thermal Printer Machine**:
+   - Removed the phone frame/mockup entirely in [`components/DynamicIslandReceipt.tsx`](file:///d:/Notion/digital-store/components/DynamicIslandReceipt.tsx).
+   - Designed a standalone hanging thermal printer machine head (`.machine`) with metallic finish, status LED, and feed aperture slot.
+   - The thermal receipt feeds out line-block by line-block directly onto the page with realistic stepper feedback.
+   - Tapping the sheet triggers the tear-away physics animation with celebration confetti and reveals instant actions (Download, Access in My Purchases, Replay).
+2. **Add to Cart in Product View Section**:
+   - Added [`components/AddToCartButton.tsx`](file:///d:/Notion/digital-store/components/AddToCartButton.tsx) side-by-side with `CheckoutButton` on [`app/products/[id]/page.tsx`](file:///d:/Notion/digital-store/app/products/[id]/page.tsx).
+   - Integrated full [`components/Navbar.tsx`](file:///d:/Notion/digital-store/components/Navbar.tsx) with live cart drawer badge.
+3. **Mandatory Sign-In on Buy / Checkout**:
+   - Updated [`components/CheckoutButton.tsx`](file:///d:/Notion/digital-store/components/CheckoutButton.tsx): Clicking "Buy Now →" redirects unauthenticated visitors to `/login?next=...` so they sign in before checking out.
+   - Updated [`components/CartDrawer.tsx`](file:///d:/Notion/digital-store/components/CartDrawer.tsx) and [`app/cart/page.tsx`](file:///d:/Notion/digital-store/app/cart/page.tsx): Clicking "Proceed to Checkout" redirects unauthenticated users to `/login?next=/cart-checkout`.
+   - Updated [`app/cart-checkout/page.tsx`](file:///d:/Notion/digital-store/app/cart-checkout/page.tsx): Unauthenticated direct visits redirect to `/login?next=/cart-checkout`.
+
+
