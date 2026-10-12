@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
+import { linkOrCreateCustomer } from '@/lib/customer';
 import { Resend } from 'resend';
 
 const resend = new Resend(process.env.EMAIL_PROVIDER_API_KEY);
@@ -30,7 +31,7 @@ async function createProductDownloadUrl(
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, userId } = body;
 
     if (
       typeof razorpay_order_id !== 'string' ||
@@ -100,15 +101,40 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, message: 'Payment already verified' }, { status: 200 });
     }
 
-    const { data: updatedOrder, error: dbError } = await supabaseAdmin
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updatePayload: any = { 
+      status: 'paid', 
+      razorpay_payment_id: razorpay_payment_id 
+    };
+
+    if (userId) {
+      updatePayload.user_id = userId;
+    }
+
+    let { data: updatedOrder, error: dbError } = await supabaseAdmin
       .from('orders')
-      .update({ 
-        status: 'paid', 
-        razorpay_payment_id: razorpay_payment_id 
-      })
+      .update(updatePayload)
       .eq('razorpay_order_id', razorpay_order_id)
-      .select('id, customer_email, customer_name')
+      .select('id, customer_email, customer_name, customer_phone')
       .maybeSingle();
+
+    const isColErr = (err: any) =>
+      err &&
+      (err.code === '42703' ||
+        err.code === 'PGRST204' ||
+        (typeof err.message === 'string' && (err.message.includes('user_id') || err.message.includes('schema cache'))));
+
+    if (dbError && isColErr(dbError) && updatePayload.user_id) {
+      delete updatePayload.user_id;
+      const retry = await supabaseAdmin
+        .from('orders')
+        .update(updatePayload)
+        .eq('razorpay_order_id', razorpay_order_id)
+        .select('id, customer_email, customer_name, customer_phone')
+        .maybeSingle();
+      updatedOrder = retry.data;
+      dbError = retry.error;
+    }
 
     if (dbError) {
       console.error('Supabase payment update error:', JSON.stringify(dbError));
@@ -124,6 +150,33 @@ export async function POST(req: Request) {
         { error: 'Payment was verified, but no matching order was found. Contact support with your Razorpay order ID.' },
         { status: 404 }
       );
+    }
+
+    // Link customer account record
+    if (updatedOrder.customer_email) {
+      try {
+        const customerProfile = await linkOrCreateCustomer(
+          {
+            id: userId || 'anonymous',
+            email: updatedOrder.customer_email,
+            user_metadata: { full_name: updatedOrder.customer_name },
+          },
+          updatedOrder.customer_phone
+        );
+
+        if (customerProfile?.id) {
+          try {
+            await supabaseAdmin
+              .from('orders')
+              .update({ customer_id: customerProfile.id })
+              .eq('id', updatedOrder.id);
+          } catch {
+            // Ignored if column is pending migration
+          }
+        }
+      } catch (custErr) {
+        console.warn('Customer linking warning:', custErr);
+      }
     }
 
     // Fetch product details from order_items

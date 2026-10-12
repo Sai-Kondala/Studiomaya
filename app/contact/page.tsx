@@ -18,7 +18,7 @@ export default function ContactPage() {
 
           <h1 className="text-4xl font-bold mb-6 tracking-tight">Contact Us</h1>
           <p className="text-gray-600 mb-8 text-lg">
-            Have questions about a product or need support with your recent purchase? We're here to help.
+            Have questions about a product or need support with your recent purchase? We&apos;re here to help.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

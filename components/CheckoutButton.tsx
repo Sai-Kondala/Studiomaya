@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import { useCart } from './CartContext';
 
 
 /* =========================================================
@@ -104,6 +105,7 @@ export default function CheckoutButton({
   rzpKeyId: string;
 }) {
   const router = useRouter();
+  const { user } = useCart();
   const [showModal, setShowModal] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [email, setEmail] = useState('');
@@ -157,6 +159,7 @@ export default function CheckoutButton({
           customerEmail: email,
           customerPhone,
           productId: product.id,
+          userId: user?.id || null,
         }),
       });
 
@@ -221,6 +224,8 @@ export default function CheckoutButton({
                   email,
 
                   productId: product.id,
+
+                  userId: user?.id || null,
                 }),
               }
             );
@@ -327,6 +332,14 @@ export default function CheckoutButton({
 
       <button
         onClick={() => {
+          if (user) {
+            if (!customerName) {
+              setCustomerName(user.user_metadata?.full_name || user.user_metadata?.name || '');
+            }
+            if (!email) {
+              setEmail(user.email || '');
+            }
+          }
           setShowModal(true);
           setErrorMsg(null);
         }}

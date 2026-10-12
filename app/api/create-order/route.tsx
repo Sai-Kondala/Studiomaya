@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 
 export async function POST(request: Request) {
   try {
-    const { customerName, customerEmail, customerPhone, productId } = await request.json();
+    const { customerName, customerEmail, customerPhone, productId, userId } = await request.json();
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
@@ -70,14 +70,44 @@ export async function POST(request: Request) {
       receipt: `order_${Date.now()}`,
     });
 
-    const { data: orderData, error: insertError } = await supabaseAdmin.from('orders').insert({
+    // Build order record payload, including userId if available
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const orderPayload: any = {
       customer_name: customerName.trim(),
       customer_email: customerEmail.trim(),
       customer_phone: customerPhone ? customerPhone.trim() : null,
       razorpay_order_id: order.id,
       amount: Math.round(serverPrice * 100) / 100,
       status: 'pending',
-    }).select('id').single();
+    };
+
+    if (userId) {
+      orderPayload.user_id = userId;
+    }
+
+    let { data: orderData, error: insertError } = await supabaseAdmin
+      .from('orders')
+      .insert(orderPayload)
+      .select('id')
+      .single();
+
+    // Gracefully handle case where user_id column has not been added yet
+    const isColErr = (err: any) =>
+      err &&
+      (err.code === '42703' ||
+        err.code === 'PGRST204' ||
+        (typeof err.message === 'string' && (err.message.includes('user_id') || err.message.includes('schema cache'))));
+
+    if (insertError && isColErr(insertError) && orderPayload.user_id) {
+      delete orderPayload.user_id;
+      const retry = await supabaseAdmin
+        .from('orders')
+        .insert(orderPayload)
+        .select('id')
+        .single();
+      orderData = retry.data;
+      insertError = retry.error;
+    }
 
     if (insertError || !orderData) {
       console.error('Supabase order insert error:', JSON.stringify(insertError));
