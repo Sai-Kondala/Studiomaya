@@ -2,6 +2,38 @@ import { NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 
+/**
+ * Validates external template destination URLs to protect customers
+ * against open redirects or compromised destination domains.
+ */
+function isValidTemplateRedirect(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.protocol !== 'https:') return false;
+
+    const hostname = parsed.hostname.toLowerCase();
+    const allowedExactHostnames = [
+      'notion.so',
+      'www.notion.so',
+      'notion.site',
+      'studiomaya.com',
+      'www.studiomaya.com',
+    ];
+
+    if (
+      allowedExactHostnames.includes(hostname) ||
+      hostname.endsWith('.notion.site') ||
+      hostname.endsWith('.notion.so')
+    ) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export async function GET(request: Request) {
   try {
     const user = await getAuthenticatedUser();
@@ -30,11 +62,12 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Order not found.' }, { status: 404 });
     }
 
-    // Ownership check: Customer email or user_id must match authenticated user
+    // Ownership check: Verified user_id or verified account email must match
     const userEmail = user.email?.trim().toLowerCase();
     const orderEmail = order.customer_email?.trim().toLowerCase();
+    const isOwner = ((order as any).user_id && (order as any).user_id === user.id) || (userEmail && orderEmail === userEmail);
 
-    if (userEmail !== orderEmail) {
+    if (!isOwner) {
       return NextResponse.json({ error: 'You do not have permission to access this order.' }, { status: 403 });
     }
 
@@ -67,16 +100,20 @@ export async function GET(request: Request) {
 
     if (!product.pdf_url) {
       if (product.template_url) {
+        if (!isValidTemplateRedirect(product.template_url)) {
+          console.error(`Blocked untrusted template redirect URL: ${product.template_url}`);
+          return NextResponse.json({ error: 'Product template URL destination is untrusted or invalid.' }, { status: 400 });
+        }
         return NextResponse.redirect(product.template_url);
       }
       return NextResponse.json({ error: 'No downloadable file associated with this product.' }, { status: 404 });
     }
 
-    // 4. Generate secure, short-lived 7-day signed URL from private bucket
+    // 4. Generate secure, short-lived 15-minute signed URL from private bucket
     const normalizedPath = product.pdf_url.replace(/^\/+/, '');
     const { data: signedData, error: signError } = await supabaseAdmin.storage
       .from('product-files')
-      .createSignedUrl(normalizedPath, 60 * 60 * 24 * 7, { download: true });
+      .createSignedUrl(normalizedPath, 60 * 15, { download: true });
 
     if (signError || !signedData?.signedUrl) {
       console.error('Storage signed URL error:', signError?.message);

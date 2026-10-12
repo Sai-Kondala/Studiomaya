@@ -1,8 +1,8 @@
 import React from 'react';
-import Link from 'next/link';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import { redirect } from 'next/navigation';
 import { Navbar } from '@/components/Navbar';
+import { AccountTabs } from '@/components/AccountTabs';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,20 +33,7 @@ export default async function AccountLayout({
           </div>
 
           {/* Quick Tabs */}
-          <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-2xl w-fit">
-            <Link
-              href="/account"
-              className="px-4 py-2 rounded-xl text-sm font-medium transition-colors hover:bg-white hover:text-black hover:shadow-xs text-gray-700"
-            >
-              Overview
-            </Link>
-            <Link
-              href="/account/orders"
-              className="px-4 py-2 rounded-xl text-sm font-medium transition-colors hover:bg-white hover:text-black hover:shadow-xs text-gray-700"
-            >
-              My Purchases
-            </Link>
-          </div>
+          <AccountTabs />
         </div>
 
         {/* Content Body */}

@@ -1,10 +1,10 @@
 'use server';
 
-import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
+import { verifyAdminSession } from '@/lib/adminAuth';
 import { revalidatePath } from 'next/cache';
 
 export async function updateSettingsAction(formData: FormData) {
-  const supabase = createSupabaseAdminClient();
+  const { supabaseAdmin: supabase } = await verifyAdminSession();
   
   const updates = {
     store_name: formData.get('store_name') as string,

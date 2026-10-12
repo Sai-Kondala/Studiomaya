@@ -19,7 +19,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
     .eq('id', id)
     .single();
 
-  if (error || !product) {
+  if (error || !product || product.status !== 'Published') {
     notFound();
   }
 

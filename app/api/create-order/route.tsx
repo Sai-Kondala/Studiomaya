@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import Razorpay from 'razorpay';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
+import { getAuthenticatedUser } from '@/lib/supabaseServer';
 
 export async function POST(request: Request) {
   try {
-    const { customerName, customerEmail, customerPhone, productId, userId } = await request.json();
+    const body = await request.json();
+    const { customerName, customerEmail, customerPhone, productId } = body;
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
@@ -41,18 +43,22 @@ export async function POST(request: Request) {
       );
     }
 
+    // Derive user_id safely from verified server session, never trusting client-supplied userId
+    const authUser = await getAuthenticatedUser();
+    const verifiedUserId = authUser?.id || null;
+
     const supabaseAdmin = createSupabaseAdminClient();
 
-    // Fetch actual price and name from database to prevent client-side manipulation
+    // Fetch actual price and name from database and enforce Published status
     const { data: product, error: productError } = await supabaseAdmin
       .from('products')
-      .select('price, name')
+      .select('price, name, status')
       .eq('id', productId)
       .single();
       
-    if (productError || !product) {
+    if (productError || !product || (product.status && product.status !== 'Published')) {
       return NextResponse.json(
-        { error: 'Product not found or price could not be verified.' },
+        { error: 'Product not found or unavailable for purchase.' },
         { status: 404 }
       );
     }
@@ -70,7 +76,7 @@ export async function POST(request: Request) {
       receipt: `order_${Date.now()}`,
     });
 
-    // Build order record payload, including userId if available
+    // Build order record payload, strictly using verified server session user_id
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const orderPayload: any = {
       customer_name: customerName.trim(),
@@ -81,8 +87,8 @@ export async function POST(request: Request) {
       status: 'pending',
     };
 
-    if (userId) {
-      orderPayload.user_id = userId;
+    if (verifiedUserId) {
+      orderPayload.user_id = verifiedUserId;
     }
 
     let { data: orderData, error: insertError } = await supabaseAdmin
@@ -91,7 +97,7 @@ export async function POST(request: Request) {
       .select('id')
       .single();
 
-    // Gracefully handle case where user_id column has not been added yet
+    // Gracefully handle case where user_id column has not been added yet in staging/test env
     const isColErr = (err: any) =>
       err &&
       (err.code === '42703' ||
@@ -126,6 +132,8 @@ export async function POST(request: Request) {
 
     if (itemError) {
       console.error('Supabase order_item insert error:', JSON.stringify(itemError));
+      // Compensating rollback: delete incomplete pending order
+      await supabaseAdmin.from('orders').delete().eq('id', orderData.id);
       return NextResponse.json(
         { error: 'The payment order items could not be saved.' },
         { status: 500 }

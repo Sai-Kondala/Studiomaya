@@ -181,4 +181,135 @@ describe('GET /api/account/download', () => {
     expect([302, 307]).toContain(res.status);
     expect(res.headers.get('location')).toBe('https://storage.supabase.co/signed/product.pdf');
   });
+
+  it('should allow download when ownership matches verified user_id even if email differs', async () => {
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue({
+      id: 'user_matching_id',
+      email: 'current_email@example.com',
+    });
+
+    mockSupabaseAdmin.from.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({
+                  data: {
+                    id: 'order_paid',
+                    status: 'paid',
+                    user_id: 'user_matching_id', // Matches session ID
+                    customer_email: 'old_purchase_email@example.com',
+                  },
+                  error: null,
+                }),
+            }),
+          }),
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: () =>
+                  Promise.resolve({
+                    data: { id: 'item_1', order_id: 'order_paid', product_id: 'prod_1' },
+                    error: null,
+                  }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () =>
+                Promise.resolve({
+                  data: { id: 'prod_1', name: 'Product 1', pdf_url: 'private/template.pdf' },
+                  error: null,
+                }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({ orderId: 'order_paid', productId: 'prod_1' });
+    const res = await GET(req);
+
+    expect([302, 307]).toContain(res.status);
+    expect(res.headers.get('location')).toBe('https://storage.supabase.co/signed/product.pdf');
+  });
+
+  it('should reject untrusted or malicious template_url with 400', async () => {
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue({
+      id: 'user_legit',
+      email: 'legit@example.com',
+    });
+
+    mockSupabaseAdmin.from.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({
+                  data: {
+                    id: 'order_paid',
+                    status: 'paid',
+                    customer_email: 'legit@example.com',
+                  },
+                  error: null,
+                }),
+            }),
+          }),
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: () =>
+                  Promise.resolve({
+                    data: { id: 'item_1', order_id: 'order_paid', product_id: 'prod_1' },
+                    error: null,
+                  }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () =>
+                Promise.resolve({
+                  data: {
+                    id: 'prod_1',
+                    name: 'Product 1',
+                    pdf_url: null,
+                    template_url: 'http://malicious-phishing-site.com/steal-creds', // untrusted
+                  },
+                  error: null,
+                }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({ orderId: 'order_paid', productId: 'prod_1' });
+    const res = await GET(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.error).toContain('untrusted or invalid');
+  });
 });

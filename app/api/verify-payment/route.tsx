@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
+import Razorpay from 'razorpay';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
+import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import { linkOrCreateCustomer } from '@/lib/customer';
 import { generateThermalReceiptEmailHtml, EmailDownloadLink } from '@/lib/emailReceiptTemplate';
 import { Resend } from 'resend';
@@ -13,11 +15,12 @@ async function createProductDownloadUrl(
 ) {
   const normalizedPath = pdfPath.replace(/^\/+/, '');
 
+  // Generate 24-hour temporary signed download link for email delivery
   const { data, error } = await supabaseAdmin.storage
     .from('product-files')
     .createSignedUrl(
       normalizedPath,
-      60 * 60 * 24 * 7,
+      60 * 60 * 24,
       { download: true }
     );
 
@@ -32,7 +35,7 @@ async function createProductDownloadUrl(
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, userId } = body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = body;
 
     if (
       typeof razorpay_order_id !== 'string' ||
@@ -47,14 +50,16 @@ export async function POST(req: Request) {
     }
 
     const secret = process.env.RAZORPAY_KEY_SECRET;
-    if (!secret) {
-      console.error('Payment verification is not configured: Razorpay secret is missing.');
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    if (!secret || !keyId) {
+      console.error('Payment verification is not configured: Razorpay credentials are missing.');
       return NextResponse.json(
         { error: 'Payment verification is not configured on the server.' },
         { status: 503 }
       );
     }
 
+    // 1. Verify HMAC SHA256 signature
     const generatedSignature = crypto
       .createHmac('sha256', secret)
       .update(razorpay_order_id + "|" + razorpay_payment_id)
@@ -83,10 +88,10 @@ export async function POST(req: Request) {
 
     const supabaseAdmin = createSupabaseAdminClient();
 
-    // Check if order is already paid to prevent duplicate emails
+    // 2. Fetch the existing pending order from database
     const { data: existingOrder, error: checkError } = await supabaseAdmin
       .from('orders')
-      .select('id, status, customer_email, customer_name')
+      .select('id, status, amount, customer_email, customer_name, customer_phone')
       .eq('razorpay_order_id', razorpay_order_id)
       .single();
 
@@ -98,9 +103,73 @@ export async function POST(req: Request) {
       );
     }
 
-    if (existingOrder && existingOrder.status === 'paid') {
+    if (!existingOrder) {
+      console.error('No order row matched the verified Razorpay order ID.');
+      return NextResponse.json(
+        { error: 'Payment was verified, but no matching order was found. Contact support with your Razorpay order ID.' },
+        { status: 404 }
+      );
+    }
+
+    // Idempotent delivery check: if already paid, return 200 without sending duplicate emails
+    if (existingOrder.status === 'paid') {
       return NextResponse.json({ success: true, message: 'Payment already verified' }, { status: 200 });
     }
+
+    // 3. Server-side validation with Razorpay API (verifies captured status, amount, and order binding)
+    const razorpay = new Razorpay({ key_id: keyId, key_secret: secret });
+    let payment: any;
+    try {
+      payment = await razorpay.payments.fetch(razorpay_payment_id);
+    } catch (rzpErr) {
+      console.error('Failed to fetch payment details from Razorpay API:', rzpErr);
+      return NextResponse.json(
+        { error: 'Could not fetch payment details from payment gateway.' },
+        { status: 502 }
+      );
+    }
+
+    if (!payment) {
+      return NextResponse.json(
+        { error: 'Payment record could not be found on Razorpay.' },
+        { status: 400 }
+      );
+    }
+
+    if (payment.order_id !== razorpay_order_id) {
+      console.error(`Payment order mismatch: expected ${razorpay_order_id}, got ${payment.order_id}`);
+      return NextResponse.json(
+        { error: 'Payment does not belong to the specified order.' },
+        { status: 400 }
+      );
+    }
+
+    const expectedAmountPaise = Math.round(Number(existingOrder.amount) * 100);
+    if (Number(payment.amount) !== expectedAmountPaise) {
+      console.error(`Payment amount mismatch: expected ${expectedAmountPaise}, got ${payment.amount}`);
+      return NextResponse.json(
+        { error: 'Captured payment amount does not match the order total.' },
+        { status: 400 }
+      );
+    }
+
+    if (payment.currency && payment.currency.toUpperCase() !== 'INR') {
+      return NextResponse.json(
+        { error: 'Payment currency does not match.' },
+        { status: 400 }
+      );
+    }
+
+    if (payment.status !== 'captured' && payment.status !== 'authorized') {
+      return NextResponse.json(
+        { error: `Payment is not in an accepted state (status: ${payment.status}).` },
+        { status: 400 }
+      );
+    }
+
+    // 4. Derive customer user ID securely from validated server session
+    const authUser = await getAuthenticatedUser();
+    const verifiedUserId = authUser?.id || existingOrder.user_id || null;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updatePayload: any = { 
@@ -108,14 +177,16 @@ export async function POST(req: Request) {
       razorpay_payment_id: razorpay_payment_id 
     };
 
-    if (userId) {
-      updatePayload.user_id = userId;
+    if (verifiedUserId) {
+      updatePayload.user_id = verifiedUserId;
     }
 
+    // 5. Atomic state transition: transition only if status is NOT already paid
     let { data: updatedOrder, error: dbError } = await supabaseAdmin
       .from('orders')
       .update(updatePayload)
       .eq('razorpay_order_id', razorpay_order_id)
+      .neq('status', 'paid')
       .select('id, amount, customer_email, customer_name, customer_phone')
       .maybeSingle();
 
@@ -131,6 +202,7 @@ export async function POST(req: Request) {
         .from('orders')
         .update(updatePayload)
         .eq('razorpay_order_id', razorpay_order_id)
+        .neq('status', 'paid')
         .select('id, amount, customer_email, customer_name, customer_phone')
         .maybeSingle();
       updatedOrder = retry.data;
@@ -145,20 +217,28 @@ export async function POST(req: Request) {
       );
     }
 
+    // If another concurrent request transitioned the order between our check and update:
     if (!updatedOrder) {
-      console.error('No order row matched the verified Razorpay order ID.');
+      const { data: currentOrder } = await supabaseAdmin
+        .from('orders')
+        .select('status')
+        .eq('razorpay_order_id', razorpay_order_id)
+        .single();
+      if (currentOrder && currentOrder.status === 'paid') {
+        return NextResponse.json({ success: true, message: 'Payment already verified' }, { status: 200 });
+      }
       return NextResponse.json(
-        { error: 'Payment was verified, but no matching order was found. Contact support with your Razorpay order ID.' },
+        { error: 'Payment was verified, but no matching order was found.' },
         { status: 404 }
       );
     }
 
-    // Link customer account record
+    // 6. Link customer account record securely
     if (updatedOrder.customer_email) {
       try {
         const customerProfile = await linkOrCreateCustomer(
           {
-            id: userId || 'anonymous',
+            id: verifiedUserId || 'anonymous',
             email: updatedOrder.customer_email,
             user_metadata: { full_name: updatedOrder.customer_name },
           },
@@ -180,7 +260,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // Fetch product details from order_items
+    // 7. Fetch product details from order_items
     const { data: orderItems, error: itemsError } = await supabaseAdmin
       .from('order_items')
       .select('product_id')

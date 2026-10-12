@@ -32,12 +32,19 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { action, productId } = body;
 
+    let opSuccess = true;
     if (action === 'add' && productId) {
-      await addProductToCart(user.id, productId);
+      opSuccess = await addProductToCart(user.id, productId);
     } else if (action === 'remove' && productId) {
-      await removeProductFromCart(user.id, productId);
+      opSuccess = await removeProductFromCart(user.id, productId);
     } else if (action === 'clear') {
-      await clearUserCart(user.id);
+      opSuccess = await clearUserCart(user.id);
+    } else {
+      return NextResponse.json({ error: 'Invalid cart action or missing productId' }, { status: 400 });
+    }
+
+    if (!opSuccess) {
+      return NextResponse.json({ error: 'Failed to update cart in database' }, { status: 500 });
     }
 
     const { items } = await getUserCartItems(user.id);
@@ -55,7 +62,11 @@ export async function DELETE() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    await clearUserCart(user.id);
+    const ok = await clearUserCart(user.id);
+    if (!ok) {
+      return NextResponse.json({ error: 'Failed to clear cart' }, { status: 500 });
+    }
+
     return NextResponse.json({ success: true, items: [] });
   } catch (error) {
     console.error('Cart DELETE API error:', error);

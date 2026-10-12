@@ -1,6 +1,7 @@
 import { POST } from '@/app/api/verify-cart-payment/route';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import crypto from 'crypto';
+import Razorpay from 'razorpay';
 
 jest.mock('@/lib/supabaseAdmin', () => ({
   createSupabaseAdminClient: jest.fn(),
@@ -14,14 +15,32 @@ jest.mock('resend', () => ({
   })),
 }));
 
+const mockPaymentsFetch = jest.fn();
+jest.mock('razorpay', () => {
+  return jest.fn().mockImplementation(() => ({
+    payments: {
+      fetch: mockPaymentsFetch,
+    },
+  }));
+});
+
 describe('POST /api/verify-cart-payment', () => {
   let mockSupabase: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.RAZORPAY_KEY_ID = 'test_key';
     process.env.RAZORPAY_KEY_SECRET = 'test_secret';
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://localhost';
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'test_role_key';
+
+    mockPaymentsFetch.mockResolvedValue({
+      id: 'pay_123',
+      order_id: 'order_rzp_123',
+      amount: 30000,
+      currency: 'INR',
+      status: 'captured',
+    });
 
     mockSupabase = {
       from: jest.fn(),
@@ -61,15 +80,27 @@ describe('POST /api/verify-cart-payment', () => {
         return {
           select: () => ({
             eq: () => ({
-              single: () => Promise.resolve({ data: { id: 'order_123', status: 'pending', customer_email: 'test@example.com' }, error: null }),
+              single: () => Promise.resolve({
+                data: { id: 'order_123', status: 'pending', amount: 300, customer_email: 'test@example.com' },
+                error: null
+              }),
             }),
           }),
           update: () => ({
             eq: () => ({
-              select: () => ({
-                single: () => Promise.resolve({ data: { id: 'order_123', status: 'paid', customer_email: 'test@example.com' }, error: null })
-              })
-            })
+              neq: () => ({
+                select: () => ({
+                  maybeSingle: () => Promise.resolve({
+                    data: { id: 'order_123', status: 'paid', amount: 300, customer_email: 'test@example.com' },
+                    error: null
+                  }),
+                  single: () => Promise.resolve({
+                    data: { id: 'order_123', status: 'paid', amount: 300, customer_email: 'test@example.com' },
+                    error: null
+                  }),
+                }),
+              }),
+            }),
           }),
         };
       }
@@ -88,8 +119,8 @@ describe('POST /api/verify-cart-payment', () => {
           select: () => ({
             in: () => Promise.resolve({
               data: [
-                { name: 'Product 1', pdf_url: 'test1.pdf' },
-                { name: 'Product 2', pdf_url: 'test2.pdf' }
+                { id: 'prod_1', name: 'Product 1', price: 100, pdf_url: 'test1.pdf' },
+                { id: 'prod_2', name: 'Product 2', price: 200, pdf_url: 'test2.pdf' }
               ],
               error: null,
             }),
@@ -110,9 +141,10 @@ describe('POST /api/verify-cart-payment', () => {
 
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
+    expect(mockPaymentsFetch).toHaveBeenCalledWith('pay_123');
   });
 
-  it('should prevent duplicate email processing', async () => {
+  it('should prevent duplicate email processing when order is already paid', async () => {
     const validSignature = generateSignature('order_rzp_123', 'pay_123');
 
     const mockFrom = mockSupabase.from as jest.Mock;
@@ -122,7 +154,10 @@ describe('POST /api/verify-cart-payment', () => {
           select: () => ({
             eq: () => ({
               // Order already marked as 'paid'
-              single: () => Promise.resolve({ data: { id: 'order_123', status: 'paid', customer_email: 'test@example.com' }, error: null }),
+              single: () => Promise.resolve({
+                data: { id: 'order_123', status: 'paid', amount: 300, customer_email: 'test@example.com' },
+                error: null
+              }),
             }),
           }),
         };
@@ -142,5 +177,6 @@ describe('POST /api/verify-cart-payment', () => {
     // The API should still return success so frontend moves to thank-you, but it won't send emails again.
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
+    expect(data.message).toBe('Payment already verified');
   });
 });

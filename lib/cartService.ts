@@ -148,11 +148,14 @@ export async function getOrCreateCart(userId: string): Promise<string | null> {
 export async function addProductToCart(userId: string, productId: string) {
   const supabase = createSupabaseAdminClient();
   const cartId = await getOrCreateCart(userId);
-  if (!cartId) return false;
+  if (!cartId) {
+    console.error(`Failed to get or create cart for user: ${userId}`);
+    return false;
+  }
 
   try {
     // Insert if not already in cart (unique constraint prevents duplicate entries)
-    await supabase.from('cart_items').upsert(
+    const { error: upsertError } = await supabase.from('cart_items').upsert(
       {
         cart_id: cartId,
         product_id: productId,
@@ -160,11 +163,24 @@ export async function addProductToCart(userId: string, productId: string) {
       { onConflict: 'cart_id,product_id' }
     );
 
+    if (upsertError) {
+      console.error(`Database error adding product ${productId} to cart ${cartId}:`, upsertError);
+      return false;
+    }
+
     // Refresh cart updated_at
-    await supabase.from('carts').update({ updated_at: new Date().toISOString() }).eq('id', cartId);
+    const { error: updateError } = await supabase
+      .from('carts')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', cartId);
+
+    if (updateError) {
+      console.warn(`Failed to update cart timestamp for ${cartId}:`, updateError);
+    }
+
     return true;
   } catch (err) {
-    console.warn('Error adding product to cart:', err);
+    console.error(`Unexpected exception adding product ${productId} to cart:`, err);
     return false;
   }
 }
@@ -176,19 +192,29 @@ export async function removeProductFromCart(userId: string, productId: string) {
   const supabase = createSupabaseAdminClient();
 
   try {
-    const { data: cart } = await supabase
+    const { data: cart, error: cartError } = await supabase
       .from('carts')
       .select('id')
       .eq('user_id', userId)
       .maybeSingle();
 
+    if (cartError) {
+      console.error(`Database error fetching cart for user ${userId}:`, cartError);
+      return false;
+    }
+
     if (!cart) return false;
 
-    await supabase
+    const { error: deleteError } = await supabase
       .from('cart_items')
       .delete()
       .eq('cart_id', cart.id)
       .eq('product_id', productId);
+
+    if (deleteError) {
+      console.error(`Database error removing product ${productId} from cart ${cart.id}:`, deleteError);
+      return false;
+    }
 
     // Refresh activity timestamp
     await supabase
@@ -198,7 +224,7 @@ export async function removeProductFromCart(userId: string, productId: string) {
 
     return true;
   } catch (err) {
-    console.warn('Error removing product from cart:', err);
+    console.error(`Unexpected exception removing product ${productId} from cart:`, err);
     return false;
   }
 }
@@ -216,19 +242,34 @@ export async function clearUserCart(userId: string) {
       return true;
     }
 
-    const { data: cart } = await cartsQuery
+    const { data: cart, error: cartError } = await cartsQuery
       .select('id')
       .eq('user_id', userId)
       .maybeSingle();
 
+    if (cartError) {
+      console.error(`Database error fetching cart for clearUserCart (${userId}):`, cartError);
+      return false;
+    }
+
     if (!cart) return true;
 
     // Delete cart items and cart
-    await supabase.from('cart_items').delete().eq('cart_id', cart.id);
-    await supabase.from('carts').delete().eq('id', cart.id);
+    const { error: itemsError } = await supabase.from('cart_items').delete().eq('cart_id', cart.id);
+    if (itemsError) {
+      console.error(`Database error deleting cart items for cart ${cart.id}:`, itemsError);
+      return false;
+    }
+
+    const { error: deleteError } = await supabase.from('carts').delete().eq('id', cart.id);
+    if (deleteError) {
+      console.error(`Database error deleting cart ${cart.id}:`, deleteError);
+      return false;
+    }
+
     return true;
   } catch (err) {
-    console.warn('Error clearing cart:', err);
+    console.error(`Unexpected exception clearing cart for user ${userId}:`, err);
     return false;
   }
 }

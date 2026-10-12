@@ -8,59 +8,81 @@ export async function middleware(request: NextRequest) {
 
   // 1. Guard Admin Routes
   if (pathname.startsWith('/admin') && !pathname.startsWith('/admin/login')) {
-    const authCookie = request.cookies.get('sb-auth-token');
+    let response = NextResponse.next({
+      request: {
+        headers: request.headers,
+      },
+    });
 
-    if (!authCookie || !authCookie.value) {
-      // No active session found, redirect back to admin login
-      return NextResponse.redirect(new URL('/admin/login', request.url));
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return NextResponse.redirect(new URL('/admin/login?error=unconfigured', request.url));
     }
 
+    let userEmail: string | null = null;
+
     try {
-      const supabaseAdmin = createSupabaseAdminClient();
+      // 1. Check standard Supabase SSR session cookies
+      const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+        cookies: {
+          getAll() {
+            return request.cookies.getAll();
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value }) =>
+              request.cookies.set(name, value)
+            );
+            response = NextResponse.next({
+              request,
+            });
+            cookiesToSet.forEach(({ name, value, options }) =>
+              response.cookies.set(name, value, options)
+            );
+          },
+        },
+      });
 
-      // Verify token with Supabase auth
-      const {
-        data: { user },
-        error: authError,
-      } = await supabaseAdmin.auth.getUser(authCookie.value);
-
-      if (authError || !user || !user.email) {
-        return NextResponse.redirect(
-          new URL(
-            '/admin/login?error=authError_' +
-              (authError?.message || 'nouser'),
-            request.url
-          )
-        );
+      const { data: { user: ssrUser } } = await supabase.auth.getUser();
+      if (ssrUser?.email) {
+        userEmail = ssrUser.email;
       }
 
-      // Check admin whitelist table
+      // 2. Fallback to custom sb-auth-token cookie if SSR cookie was absent
+      if (!userEmail) {
+        const authCookie = request.cookies.get('sb-auth-token');
+        if (authCookie?.value) {
+          const supabaseAdmin = createSupabaseAdminClient();
+          const { data: { user: tokenUser } } = await supabaseAdmin.auth.getUser(authCookie.value);
+          if (tokenUser?.email) {
+            userEmail = tokenUser.email;
+          }
+        }
+      }
+
+      if (!userEmail) {
+        return NextResponse.redirect(new URL('/admin/login', request.url));
+      }
+
+      // 3. Verify admin whitelist in admin_users table
+      const supabaseAdmin = createSupabaseAdminClient();
       const { data: adminUser, error: dbError } = await supabaseAdmin
         .from('admin_users')
         .select('email')
-        .eq('email', user.email)
+        .eq('email', userEmail.toLowerCase().trim())
         .limit(1)
         .maybeSingle();
 
       if (dbError || !adminUser) {
-        // Authenticated user is not an admin
-        return NextResponse.redirect(
-          new URL(
-            '/admin/login?error=notAdmin_' +
-              (dbError?.message || 'nomatch'),
-            request.url
-          )
-        );
+        return NextResponse.redirect(new URL('/admin/login?error=not_admin', request.url));
       }
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'unknown';
-      console.error('Admin Middleware Auth Error:', err);
-      return NextResponse.redirect(
-        new URL('/admin/login?error=exception_' + errorMessage, request.url)
-      );
-    }
 
-    return NextResponse.next();
+      return response;
+    } catch (err: unknown) {
+      console.error('Admin Middleware Auth Error:', err);
+      return NextResponse.redirect(new URL('/admin/login?error=auth_exception', request.url));
+    }
   }
 
   // 2. Guard Authenticated Customer Routes (/account/*)

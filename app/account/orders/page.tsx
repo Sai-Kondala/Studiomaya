@@ -25,11 +25,13 @@ export default async function CustomerOrdersPage({ searchParams }: PageProps) {
 
   const supabaseAdmin = createSupabaseAdminClient();
 
+  const emailFilter = user.email.trim();
+
   // 1. Fetch total count of customer's orders
-  const { count } = await supabaseAdmin
+  const { count, error: countError } = await supabaseAdmin
     .from('orders')
     .select('id', { count: 'exact', head: true })
-    .eq('customer_email', user.email);
+    .ilike('customer_email', emailFilter);
 
   const totalOrders = count || 0;
   const totalPages = Math.ceil(totalOrders / PAGE_SIZE) || 1;
@@ -39,12 +41,12 @@ export default async function CustomerOrdersPage({ searchParams }: PageProps) {
   const { data: orders, error: ordersError } = await supabaseAdmin
     .from('orders')
     .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id')
-    .eq('customer_email', user.email)
+    .ilike('customer_email', emailFilter)
     .order('created_at', { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
 
-  if (ordersError) {
-    console.error('Error fetching customer orders:', ordersError);
+  if (ordersError || countError) {
+    console.error('Error fetching customer orders:', ordersError || countError);
   }
 
   const orderList = orders || [];

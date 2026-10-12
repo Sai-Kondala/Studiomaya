@@ -52,10 +52,25 @@ describe('Cart API Endpoints', () => {
     expect(res.status).toBe(401);
   });
 
-  it('POST /api/cart/cleanup should execute cleanup and return count', async () => {
+  it('POST /api/cart/cleanup should reject unauthenticated requests with 401', async () => {
+    delete process.env.CRON_SECRET;
+    const req = new Request('http://localhost/api/cart/cleanup', { method: 'POST' });
+    const res = await cleanupPOST(req);
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/cart/cleanup should execute cleanup with valid CRON_SECRET', async () => {
+    process.env.CRON_SECRET = 'valid_cron_secret';
     (cleanupExpiredCarts as jest.Mock).mockResolvedValue(3);
 
-    const res = await cleanupPOST();
+    const req = new Request('http://localhost/api/cart/cleanup', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer valid_cron_secret',
+      },
+    });
+
+    const res = await cleanupPOST(req);
     const data = await res.json();
 
     expect(res.status).toBe(200);
