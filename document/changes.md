@@ -301,5 +301,18 @@ Snapshots:   0 total
    - Replaced stepped layout jumps with smooth continuous height transitions using `cubic-bezier(0.2, 0.8, 0.2, 1)`.
    - Content blocks transition opacity smoothly (`transition-opacity duration-300`) as paper advances.
 
+---
+
+## 8. Related Products Section & Order Confirmation Copy Update
+
+1. **Related Products in Product View Page**:
+   - Added a "Related Products" recommendation grid in [`app/products/[id]/page.tsx`](file:///d:/Notion/digital-store/app/products/[id]/page.tsx).
+   - Intelligently queries published products, prioritizing identical categories and excluding the currently viewed product.
+   - Fully interactive cards featuring product thumbnails with hover effects, rating tags, pricing, `AddToCartButton`, and direct product view links.
+2. **Order Confirmation Copy Update**:
+   - Updated the subtitle text on [`app/thank-you/page.tsx`](file:///d:/Notion/digital-store/app/thank-you/page.tsx) to:
+     `"Collect the receipt below. Tap the sheet to tear off your verified pass."`
+
+
 
 

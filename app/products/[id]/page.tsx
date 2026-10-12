@@ -27,6 +27,23 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const images = getProductImages(product.image_url);
   const primaryImage = getProductPrimaryImage(product.image_url);
 
+  // 3. Fetch related products (prefer same category, fallback to other published products)
+  const { data: allPublished } = await supabase
+    .from('products')
+    .select('*')
+    .eq('status', 'Published')
+    .neq('id', id)
+    .order('created_at', { ascending: false })
+    .limit(8);
+
+  const relatedProducts = (allPublished || [])
+    .sort((a, b) => {
+      const aSame = product.category && a.category === product.category ? 1 : 0;
+      const bSame = product.category && b.category === product.category ? 1 : 0;
+      return bSame - aSame;
+    })
+    .slice(0, 3);
+
   return (
     <main className="min-h-screen bg-gray-50 text-gray-900 font-sans pb-24">
       {/* Global Brand Navigation with Cart Drawer trigger and customer avatar */}
@@ -114,6 +131,108 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           </p>
         </div>
       </div>
+
+      {/* Related Products Section */}
+      {relatedProducts && relatedProducts.length > 0 && (
+        <section className="max-w-6xl mx-auto px-4 sm:px-8 mt-20 pt-16 border-t border-gray-200/80">
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8">
+            <div>
+              <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-orange-600 bg-orange-50 px-2.5 py-1 rounded-full mb-2">
+                <span>Curated Workspace Systems</span>
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-950 tracking-tight">
+                Related Products
+              </h2>
+              <p className="text-gray-500 text-sm mt-1">
+                More templates and productivity systems to elevate your workflow
+              </p>
+            </div>
+            <Link
+              href="/"
+              className="text-xs sm:text-sm font-semibold text-gray-600 hover:text-black transition-colors flex items-center gap-1.5 shrink-0 self-start sm:self-auto"
+            >
+              <span>Explore all templates</span>
+              <span>→</span>
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
+            {relatedProducts.map((relProduct) => {
+              const relPrimaryImage = getProductPrimaryImage(relProduct.image_url);
+              return (
+                <div
+                  key={relProduct.id}
+                  className="bg-white rounded-2xl shadow-xs border border-gray-100 overflow-hidden flex flex-col transition-all duration-200 hover:-translate-y-1 hover:shadow-md group"
+                >
+                  <Link href={`/products/${relProduct.id}`} className="block relative aspect-16/10 overflow-hidden bg-gray-100">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={relPrimaryImage || 'https://via.placeholder.com/400x300'}
+                      alt={relProduct.name}
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    />
+                    {relProduct.category && (
+                      <span className="absolute top-3 left-3 bg-white/90 backdrop-blur-xs text-gray-900 text-[10px] font-bold px-2.5 py-1 rounded-full shadow-xs">
+                        {relProduct.category}
+                      </span>
+                    )}
+                  </Link>
+
+                  <div className="p-5 flex flex-col flex-1">
+                    <Link href={`/products/${relProduct.id}`}>
+                      <h3 className="text-base sm:text-lg font-bold text-gray-950 mb-1 line-clamp-1 hover:text-gray-700 transition-colors">
+                        {relProduct.name}
+                      </h3>
+                    </Link>
+                    
+                    <div className="flex items-center gap-1 mb-2.5 text-xs text-gray-500">
+                      <span className="text-amber-400">★</span>
+                      <span className="font-semibold text-gray-700">4.9</span>
+                      <span>• Notion Template</span>
+                    </div>
+
+                    <p className="text-gray-500 text-xs sm:text-sm mb-5 line-clamp-2 leading-relaxed">
+                      {relProduct.short_description || relProduct.description}
+                    </p>
+
+                    <div className="mt-auto pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                      <div className="flex flex-col">
+                        <span className="text-lg sm:text-xl font-extrabold text-gray-950 font-sans">
+                          ₹{relProduct.price}
+                        </span>
+                        {relProduct.original_price && (
+                          <span className="text-xs text-gray-400 line-through">
+                            ₹{relProduct.original_price}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <AddToCartButton
+                          product={{
+                            id: relProduct.id,
+                            name: relProduct.name,
+                            price: relProduct.price,
+                            image_url: relPrimaryImage,
+                          }}
+                          variant="outline"
+                          className="h-9 px-3 rounded-xl border-gray-300 hover:border-black"
+                        />
+                        <Link
+                          href={`/products/${relProduct.id}`}
+                          className="bg-black text-white px-3.5 py-2 rounded-xl text-xs font-semibold hover:bg-gray-800 transition-colors whitespace-nowrap"
+                        >
+                          View →
+                        </Link>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </main>
   );
 }

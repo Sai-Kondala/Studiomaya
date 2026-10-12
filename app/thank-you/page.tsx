@@ -118,7 +118,7 @@ export default async function ThankYouPage({ searchParams }: PageProps) {
             Thank you for your purchase!
           </h1>
           <p className="text-xs sm:text-sm text-gray-500 mt-1.5 max-w-sm mx-auto">
-            Your thermal receipt has printed from the Dynamic Island. Tap the sheet to tear off your verified pass.
+            Collect the receipt below. Tap the sheet to tear off your verified pass.
           </p>
         </div>
 
