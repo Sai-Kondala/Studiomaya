@@ -1,12 +1,23 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import { mergeAnonymousCartIntoUser } from '@/lib/cartService';
+import { linkOrCreateCustomer, linkGuestOrdersForUser } from '@/lib/customer';
 
 export async function POST(request: Request) {
   try {
     const user = await getAuthenticatedUser();
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Reconcile customer profile and unassigned guest orders for verified user
+    try {
+      await linkOrCreateCustomer(user);
+      if (user.email) {
+        await linkGuestOrdersForUser(user.id, user.email);
+      }
+    } catch (reconcileErr) {
+      console.warn('Customer/order reconciliation post-login warning:', reconcileErr);
     }
 
     const body = await request.json();

@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { getSafeRedirectUrl } from '@/lib/safeRedirect';
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
-  const next = requestUrl.searchParams.get('next') || '/account';
+  const rawNext = requestUrl.searchParams.get('next');
+  const safeNext = getSafeRedirectUrl(rawNext, '/account');
   const type = requestUrl.searchParams.get('type');
 
   if (code) {
@@ -35,7 +37,7 @@ export async function GET(request: Request) {
       if (type === 'recovery') {
         return NextResponse.redirect(new URL('/reset-password', requestUrl.origin));
       }
-      return NextResponse.redirect(new URL(next, requestUrl.origin));
+      return NextResponse.redirect(new URL(safeNext, requestUrl.origin));
     }
   }
 

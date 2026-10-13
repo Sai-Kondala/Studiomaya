@@ -4,13 +4,15 @@ import React, { useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getSupabaseBrowserClient } from '@/lib/supabaseClient';
+import { getSafeRedirectUrl } from '@/lib/safeRedirect';
 import { useCart } from '@/components/CartContext';
 import { Eye, EyeOff, Lock, Mail, ArrowRight, AlertCircle } from 'lucide-react';
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const nextUrl = searchParams.get('next') || '/account';
+  const rawNext = searchParams.get('next');
+  const nextUrl = getSafeRedirectUrl(rawNext, '/account');
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
