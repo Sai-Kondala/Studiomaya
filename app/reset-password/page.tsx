@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getSupabaseBrowserClient } from '@/lib/supabaseClient';
@@ -12,8 +12,71 @@ export default function ResetPasswordPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [hasValidSession, setHasValidSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    const supabase = getSupabaseBrowserClient();
+
+    const verifySessionAndCode = async () => {
+      try {
+        // 1. Check if ?code= is present in URL (e.g. redirected directly to this route)
+        const searchParams = new URLSearchParams(window.location.search);
+        const code = searchParams.get('code');
+
+        if (code) {
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+          if (exchangeError) {
+            if (mounted) {
+              setError(exchangeError.message || 'Invalid or expired password reset link.');
+              setCheckingSession(false);
+            }
+            return;
+          }
+        }
+
+        // 2. Check for active session
+        const { data: { session } } = await supabase.auth.getSession();
+        if (mounted) {
+          if (session) {
+            setHasValidSession(true);
+          } else {
+            const hash = window.location.hash;
+            if (!hash.includes('access_token') && !hash.includes('type=recovery')) {
+              setError('No active password reset session found. Please request a new reset link.');
+            }
+          }
+          setCheckingSession(false);
+        }
+      } catch (err: unknown) {
+        if (mounted) {
+          const msg = err instanceof Error ? err.message : 'Error verifying reset session.';
+          setError(msg);
+          setCheckingSession(false);
+        }
+      }
+    };
+
+    // 3. Listen for auth state changes (e.g. PASSWORD_RECOVERY or SIGNED_IN)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') {
+        if (session && mounted) {
+          setHasValidSession(true);
+          setCheckingSession(false);
+        }
+      }
+    });
+
+    verifySessionAndCode();
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -56,6 +119,7 @@ export default function ResetPasswordPage() {
     }
   };
 
+
   return (
     <main className="min-h-screen bg-gray-50 flex flex-col justify-center items-center p-4 sm:p-6 font-sans">
       <div className="w-full max-w-md bg-white rounded-3xl p-8 sm:p-10 shadow-sm border border-gray-100 text-gray-900">
@@ -72,7 +136,12 @@ export default function ResetPasswordPage() {
           </p>
         </div>
 
-        {success ? (
+        {checkingSession ? (
+          <div className="text-center py-12">
+            <div className="w-8 h-8 border-2 border-black border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-sm text-gray-500">Verifying secure reset link...</p>
+          </div>
+        ) : success ? (
           <div className="text-center py-4">
             <div className="w-12 h-12 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4 border border-green-100">
               <CheckCircle2 className="w-6 h-6" />
@@ -93,10 +162,23 @@ export default function ResetPasswordPage() {
             {error && (
               <div className="mb-6 p-4 bg-red-50/80 border border-red-200/60 rounded-2xl flex items-start gap-3 text-red-700 text-sm">
                 <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
-                <div className="flex-1 leading-relaxed">{error}</div>
+                <div className="flex-1 leading-relaxed">
+                  <p>{error}</p>
+                  {!hasValidSession && (
+                    <div className="mt-3">
+                      <Link
+                        href="/forgot-password"
+                        className="inline-flex items-center gap-1.5 font-semibold text-black hover:underline"
+                      >
+                        Request a new reset link <ArrowRight className="w-3.5 h-3.5" />
+                      </Link>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
+            {hasValidSession && (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label htmlFor="new-password" className="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1.5">
@@ -165,6 +247,7 @@ export default function ResetPasswordPage() {
                 )}
               </button>
             </form>
+            )}
           </>
         )}
       </div>

@@ -84,8 +84,9 @@ graph TD
 | [`app/login/page.tsx`](file:///d:/Notion/digital-store/app/login/page.tsx) | Customer Sign-In | StudioMaya-styled login with email & password fields, show/hide password toggle, "Remember me" session persistence, error alerts, redirect preservation, and conditional Google/Facebook OAuth triggers. |
 | [`app/signup/page.tsx`](file:///d:/Notion/digital-store/app/signup/page.tsx) | Customer Registration | Name, email, password, and password confirmation validation with real-time feedback and direct login redirection. |
 | [`app/forgot-password/page.tsx`](file:///d:/Notion/digital-store/app/forgot-password/page.tsx) | Password Reset Request | Dispatches Supabase password recovery email with redirect back to the platform callback. |
-| [`app/reset-password/page.tsx`](file:///d:/Notion/digital-store/app/reset-password/page.tsx) | New Password Submission | Form for authenticated recovery sessions to update account credentials with confirmation matching. |
-| [`app/auth/callback/route.ts`](file:///d:/Notion/digital-store/app/auth/callback/route.ts) | PKCE Code Exchange | Server route exchanging temporary auth codes for active session cookies during email verification and password resets. |
+| [`app/reset-password/page.tsx`](file:///d:/Notion/digital-store/app/reset-password/page.tsx) | New Password Submission | Form for authenticated recovery sessions to update account credentials. Automatically exchanges incoming `code` parameters, verifies session validity, and provides clear user guidance for expired links. |
+| [`app/auth/callback/route.ts`](file:///d:/Notion/digital-store/app/auth/callback/route.ts) | PKCE Code & OTP Exchange | Server route exchanging temporary auth codes or OTP token hashes (`token_hash`) for active session cookies during email verification and password resets. |
+| [`components/AuthRedirectHandler.tsx`](file:///d:/Notion/digital-store/components/AuthRedirectHandler.tsx) | Client Recovery Safety Net | Intercepts edge-case recovery tokens (`#type=recovery` or `?code=`) landing on the store homepage and immediately forwards the user to `/reset-password`. |
 | [`app/api/auth/logout/route.ts`](file:///d:/Notion/digital-store/app/api/auth/logout/route.ts) | Session Termination | Invalidates Supabase sessions server-side and clears authentication cookies. |
 
 ---
