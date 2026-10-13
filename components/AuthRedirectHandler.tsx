@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import type { AuthChangeEvent } from '@supabase/supabase-js';
 import { getSupabaseBrowserClient } from '@/lib/supabaseClient';
 
 /**
@@ -46,7 +47,7 @@ export function AuthRedirectHandler() {
       const supabase = getSupabaseBrowserClient();
       const {
         data: { subscription },
-      } = supabase.auth.onAuthStateChange((event) => {
+      } = supabase.auth.onAuthStateChange((event: AuthChangeEvent) => {
         if (event === 'PASSWORD_RECOVERY' && pathname !== '/reset-password') {
           router.push('/reset-password');
         }
