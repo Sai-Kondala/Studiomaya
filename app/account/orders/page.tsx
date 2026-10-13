@@ -18,6 +18,7 @@ export default async function CustomerOrdersPage({ searchParams }: PageProps) {
   const user = await getAuthenticatedUser();
   if (!user || !user.email) {
     redirect('/login?next=/account/orders');
+    return null;
   }
 
   const { page: pageParam } = await searchParams;
@@ -25,14 +26,17 @@ export default async function CustomerOrdersPage({ searchParams }: PageProps) {
 
   const supabaseAdmin = createSupabaseAdminClient();
   const normalizedEmail = user.email.trim().toLowerCase();
+  const ownershipFilter = `user_id.eq.${user.id},and(user_id.is.null,customer_email.ilike.${normalizedEmail})`;
 
-  // 1. Fetch total count of customer's orders (owned by user_id OR unclaimed guest matching normalized email)
+  // 1. Fetch total count of customer's orders strictly matching ownership
+  // (owned by user_id OR unclaimed guest matching normalized email)
   let { count, error: countError } = await supabaseAdmin
     .from('orders')
     .select('id', { count: 'exact', head: true })
-    .or(`user_id.eq.${user.id},and(user_id.is.null,customer_email.ilike.${normalizedEmail})`);
+    .or(ownershipFilter);
 
-  if (countError && (countError.code === '42703' || countError.code === 'PGRST204' || (typeof countError.message === 'string' && countError.message.includes('user_id')))) {
+  // Fallback only if the user_id column does not exist on the table (Postgres error 42703)
+  if (countError && countError.code === '42703') {
     const fallbackCount = await supabaseAdmin
       .from('orders')
       .select('id', { count: 'exact', head: true })
@@ -45,22 +49,23 @@ export default async function CustomerOrdersPage({ searchParams }: PageProps) {
   const totalPages = Math.ceil(totalOrders / PAGE_SIZE) || 1;
   const offset = (currentPage - 1) * PAGE_SIZE;
 
-  // 2. Fetch paginated orders belonging strictly to this customer
+  // 2. Fetch paginated orders belonging strictly to this customer.
+  // Ownership filtering is applied in the WHERE clause BEFORE pagination range/slice.
   let { data: rawOrders, error: ordersError } = await supabaseAdmin
     .from('orders')
     .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id, user_id, customer_email')
-    .or(`user_id.eq.${user.id},and(user_id.is.null,customer_email.ilike.${normalizedEmail})`)
+    .or(ownershipFilter)
     .order('created_at', { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
 
-  if (ordersError && (ordersError.code === '42703' || ordersError.code === 'PGRST204' || (typeof ordersError.message === 'string' && ordersError.message.includes('user_id')))) {
+  if (ordersError && ordersError.code === '42703') {
     const fallbackOrders = await supabaseAdmin
       .from('orders')
       .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id, customer_email')
       .ilike('customer_email', normalizedEmail)
       .order('created_at', { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
-    rawOrders = fallbackOrders.data as any;
+    rawOrders = fallbackOrders.data as typeof rawOrders;
     ordersError = fallbackOrders.error;
   }
 
@@ -68,16 +73,9 @@ export default async function CustomerOrdersPage({ searchParams }: PageProps) {
     console.error('Error fetching customer orders:', ordersError || countError);
   }
 
-  // Enforce ownership:
-  // 1. If order has user_id, it must match user.id (never expose orders assigned to another user).
-  // 2. If order has no user_id (unclaimed guest), customer_email must match normalized user email.
-  const orderList = (rawOrders || []).filter((order: any) => {
-    if (order.user_id) {
-      return order.user_id === user.id;
-    }
-    const orderEmail = order.customer_email ? order.customer_email.trim().toLowerCase() : '';
-    return orderEmail === normalizedEmail;
-  });
+  // Ownership filtering was performed at the database level prior to pagination;
+  // orderList preserves the exact paginated slice.
+  const orderList = rawOrders || [];
   const orderIds = orderList.map((o) => o.id);
 
   // 3. Fetch order items for these orders

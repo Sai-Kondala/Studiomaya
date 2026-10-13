@@ -69,3 +69,82 @@ BEGIN
     RETURN deleted_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 7. Row-Level Security (RLS) Configuration
+ALTER TABLE public.customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.carts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cart_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+
+-- Customers RLS Policies
+DROP POLICY IF EXISTS "Customers can view their own profile" ON public.customers;
+CREATE POLICY "Customers can view their own profile" ON public.customers
+    FOR SELECT TO authenticated
+    USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Customers can update their own profile" ON public.customers;
+CREATE POLICY "Customers can update their own profile" ON public.customers
+    FOR UPDATE TO authenticated
+    USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Customers can insert their own profile" ON public.customers;
+CREATE POLICY "Customers can insert their own profile" ON public.customers
+    FOR INSERT TO authenticated
+    WITH CHECK (auth.uid() = user_id);
+
+-- Carts RLS Policies
+DROP POLICY IF EXISTS "Users can manage their own cart" ON public.carts;
+CREATE POLICY "Users can manage their own cart" ON public.carts
+    FOR ALL TO authenticated
+    USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id);
+
+-- Cart items RLS Policies
+DROP POLICY IF EXISTS "Users can manage their own cart items" ON public.cart_items;
+CREATE POLICY "Users can manage their own cart items" ON public.cart_items
+    FOR ALL TO authenticated
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.carts 
+            WHERE carts.id = cart_items.cart_id 
+            AND carts.user_id = auth.uid()
+        )
+    )
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.carts 
+            WHERE carts.id = cart_items.cart_id 
+            AND carts.user_id = auth.uid()
+        )
+    );
+
+-- Orders RLS Policies:
+-- If an order has a user_id, only that user can read it.
+-- Allow email matching ONLY for unassigned guest orders (user_id IS NULL).
+DROP POLICY IF EXISTS "Customers can view their own orders" ON public.orders;
+CREATE POLICY "Customers can view their own orders" ON public.orders
+    FOR SELECT TO authenticated
+    USING (
+        (user_id IS NOT NULL AND auth.uid() = user_id)
+        OR
+        (user_id IS NULL AND customer_email = (auth.jwt() ->> 'email'))
+    );
+
+-- Order Items RLS Policies:
+-- Read-only for customers based on parent order ownership rule.
+DROP POLICY IF EXISTS "Customers can view their own order items" ON public.order_items;
+CREATE POLICY "Customers can view their own order items" ON public.order_items
+    FOR SELECT TO authenticated
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.orders
+            WHERE orders.id = order_items.order_id
+            AND (
+                (orders.user_id IS NOT NULL AND orders.user_id = auth.uid())
+                OR
+                (orders.user_id IS NULL AND orders.customer_email = (auth.jwt() ->> 'email'))
+            )
+        )
+    );

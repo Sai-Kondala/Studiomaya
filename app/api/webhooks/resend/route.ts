@@ -55,6 +55,14 @@ export async function POST(req: Request) {
     const rawBody = await req.text();
     const webhookSecret = process.env.RESEND_WEBHOOK_SECRET;
 
+    if (!webhookSecret && process.env.NODE_ENV === 'production') {
+      console.error('RESEND_WEBHOOK_SECRET is missing in production.');
+      return NextResponse.json(
+        { error: 'Webhook secret is not configured in production.' },
+        { status: 500 }
+      );
+    }
+
     if (webhookSecret && !verifyResendWebhookSignature(rawBody, req.headers, webhookSecret)) {
       console.error('Invalid Resend webhook signature.');
       return NextResponse.json({ error: 'Invalid webhook signature.' }, { status: 401 });
@@ -105,13 +113,20 @@ export async function POST(req: Request) {
     }
 
     if (newStatus) {
-      try {
-        await supabaseAdmin
-          .from('orders')
-          .update({ email_delivery_status: newStatus })
-          .eq('id', orderId);
-      } catch (err) {
-        console.warn(`Failed to update order ${orderId} email_delivery_status to ${newStatus}:`, err);
+      const { error: updateError } = await supabaseAdmin
+        .from('orders')
+        .update({ email_delivery_status: newStatus })
+        .eq('id', orderId);
+
+      if (updateError) {
+        console.error(
+          `Failed to update order ${orderId} email_delivery_status to ${newStatus}:`,
+          updateError
+        );
+        return NextResponse.json(
+          { error: 'Failed to update order email delivery status in database.' },
+          { status: 500 }
+        );
       }
     }
 

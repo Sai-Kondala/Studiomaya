@@ -134,4 +134,79 @@ describe('POST /api/webhooks/resend', () => {
     const res = await POST(req);
     expect(res.status).toBe(400);
   });
+
+  it('should reject request with 500 if RESEND_WEBHOOK_SECRET is missing in production', async () => {
+    const originalEnv = process.env.NODE_ENV;
+    try {
+      (process.env as any).NODE_ENV = 'production';
+      delete process.env.RESEND_WEBHOOK_SECRET;
+
+      const event = {
+        type: 'email.delivered',
+        data: { tags: [{ name: 'order_id', value: 'order_123' }] },
+      };
+
+      const res = await POST(createWebhookRequest(event));
+      const data = await res.json();
+
+      expect(res.status).toBe(500);
+      expect(data.error).toContain('Webhook secret is not configured in production');
+    } finally {
+      (process.env as any).NODE_ENV = originalEnv;
+    }
+  });
+
+  it('should reject request with 401 if RESEND_WEBHOOK_SECRET is set but signature is invalid', async () => {
+    process.env.RESEND_WEBHOOK_SECRET = 'whsec_testsecret1234567890';
+
+    const event = {
+      type: 'email.delivered',
+      data: { tags: [{ name: 'order_id', value: 'order_123' }] },
+    };
+
+    const req = new Request('http://localhost/api/webhooks/resend', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'svix-id': 'msg_test123',
+        'svix-timestamp': Math.floor(Date.now() / 1000).toString(),
+        'svix-signature': 'v1,invalidsignaturehere==',
+      },
+      body: JSON.stringify(event),
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(401);
+    expect(data.error).toBe('Invalid webhook signature.');
+  });
+
+  it('should return 500 when Supabase update returns a database error so Resend can retry', async () => {
+    mockSupabase.from.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          update: () => ({
+            eq: () => Promise.resolve({ error: { message: 'Connection failure to Postgres' } }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const event = {
+      type: 'email.delivered',
+      created_at: new Date().toISOString(),
+      data: {
+        email_id: 'resend_email_123',
+        tags: [{ name: 'order_id', value: 'order_retry_me' }],
+      },
+    };
+
+    const res = await POST(createWebhookRequest(event));
+    const data = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(data.error).toBe('Failed to update order email delivery status in database.');
+  });
 });
