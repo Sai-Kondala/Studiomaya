@@ -56,7 +56,7 @@ export async function POST(request: Request) {
       .eq('id', productId)
       .single();
       
-    if (productError || !product || (product.status && product.status !== 'Published')) {
+    if (productError || !product || product.status !== 'Published') {
       return NextResponse.json(
         { error: 'Product not found or unavailable for purchase.' },
         { status: 404 }

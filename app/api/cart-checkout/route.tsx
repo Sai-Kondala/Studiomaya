@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     }
 
     // Verify all requested products exist and are currently published
-    const publishedProducts = products.filter((p) => p.status === 'Published' || p.status === undefined);
+    const publishedProducts = products.filter((p) => p.status === 'Published');
     if (publishedProducts.length !== uniqueProductIds.length) {
       return NextResponse.json(
         { error: 'One or more items in your cart are no longer available.' },

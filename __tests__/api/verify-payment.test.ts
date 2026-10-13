@@ -18,10 +18,12 @@ jest.mock('resend', () => ({
 }));
 
 const mockPaymentsFetch = jest.fn();
+const mockPaymentsCapture = jest.fn();
 jest.mock('razorpay', () => {
   return jest.fn().mockImplementation(() => ({
     payments: {
       fetch: mockPaymentsFetch,
+      capture: mockPaymentsCapture,
     },
   }));
 });
@@ -332,6 +334,239 @@ describe('POST /api/verify-payment', () => {
     // Order remains paid and verification returns 200
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
+  });
+
+  it('should reject payment if currency is missing', async () => {
+    const validSignature = generateSignature('order_rzp_123', 'pay_123');
+
+    mockPaymentsFetch.mockResolvedValue({
+      id: 'pay_123',
+      order_id: 'order_rzp_123',
+      amount: 50000,
+      currency: null, // Missing currency
+      status: 'captured',
+    });
+
+    const mockFrom = mockSupabase.from as jest.Mock;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { id: 'order_123', status: 'pending', amount: 500, customer_email: 'test@example.com' },
+                error: null
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      razorpay_order_id: 'order_rzp_123',
+      razorpay_payment_id: 'pay_123',
+      razorpay_signature: validSignature,
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.error).toContain('currency does not match or is missing');
+  });
+
+  it('should capture authorized payment server-side and fulfill order', async () => {
+    const validSignature = generateSignature('order_rzp_123', 'pay_123');
+
+    mockPaymentsFetch.mockResolvedValue({
+      id: 'pay_123',
+      order_id: 'order_rzp_123',
+      amount: 50000,
+      currency: 'INR',
+      status: 'authorized', // Authorized status
+    });
+
+    mockPaymentsCapture.mockResolvedValue({
+      id: 'pay_123',
+      order_id: 'order_rzp_123',
+      amount: 50000,
+      currency: 'INR',
+      status: 'captured', // Successfully captured
+    });
+
+    const mockFrom = mockSupabase.from as jest.Mock;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { id: 'order_123', status: 'pending', amount: 500, customer_email: 'test@example.com' },
+                error: null
+              }),
+            }),
+          }),
+          update: () => ({
+            eq: () => ({
+              neq: () => ({
+                select: () => ({
+                  maybeSingle: () => Promise.resolve({
+                    data: { id: 'order_123', status: 'paid', amount: 500, customer_email: 'test@example.com' },
+                    error: null
+                  }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          select: () => ({
+            eq: () => Promise.resolve({
+              data: [{ product_id: 'prod_1' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { name: 'Test Product', pdf_url: 'test.pdf' },
+                error: null,
+              })
+            })
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      razorpay_order_id: 'order_rzp_123',
+      razorpay_payment_id: 'pay_123',
+      razorpay_signature: validSignature,
+      productId: 'prod_1',
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockPaymentsCapture).toHaveBeenCalledWith('pay_123', 50000, 'INR');
+  });
+
+  it('should reject authorized payment when server capture fails', async () => {
+    const validSignature = generateSignature('order_rzp_123', 'pay_123');
+
+    mockPaymentsFetch.mockResolvedValue({
+      id: 'pay_123',
+      order_id: 'order_rzp_123',
+      amount: 50000,
+      currency: 'INR',
+      status: 'authorized',
+    });
+
+    mockPaymentsCapture.mockRejectedValue(new Error('Gateway capture failed'));
+
+    const mockFrom = mockSupabase.from as jest.Mock;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { id: 'order_123', status: 'pending', amount: 500, customer_email: 'test@example.com' },
+                error: null
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      razorpay_order_id: 'order_rzp_123',
+      razorpay_payment_id: 'pay_123',
+      razorpay_signature: validSignature,
+      productId: 'prod_1',
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.error).toContain('authorization could not be captured');
+  });
+
+  it('should retry sending receipt email on duplicate verification if email delivery previously failed', async () => {
+    const validSignature = generateSignature('order_rzp_123', 'pay_123');
+
+    const mockFrom = mockSupabase.from as jest.Mock;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: {
+                  id: 'order_123',
+                  status: 'paid',
+                  amount: 500,
+                  customer_email: 'test@example.com',
+                  email_delivery_status: 'failed', // Previously failed!
+                },
+                error: null,
+              }),
+            }),
+          }),
+          update: () => ({
+            eq: () => Promise.resolve({ error: null }),
+          }),
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          select: () => ({
+            eq: () => Promise.resolve({
+              data: [{ product_id: 'prod_1', unit_price: 500, product_name_snapshot: 'Test Product' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'products') {
+        return {
+          select: () => ({
+            in: () => Promise.resolve({
+              data: [{ id: 'prod_1', name: 'Test Product', price: 500, pdf_url: 'test.pdf' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      razorpay_order_id: 'order_rzp_123',
+      razorpay_payment_id: 'pay_123',
+      razorpay_signature: validSignature,
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(mockResendSend).toHaveBeenCalled();
   });
 
   it('should fail with invalid signature', async () => {

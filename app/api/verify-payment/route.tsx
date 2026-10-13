@@ -6,6 +6,7 @@ import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import { linkOrCreateCustomer } from '@/lib/customer';
 import { generateThermalReceiptEmailHtml, EmailDownloadLink } from '@/lib/emailReceiptTemplate';
 import { Resend } from 'resend';
+import { sendOrderReceiptEmail } from '@/lib/orderEmailDelivery';
 
 const resend = new Resend(process.env.EMAIL_PROVIDER_API_KEY);
 
@@ -89,11 +90,21 @@ export async function POST(req: Request) {
     const supabaseAdmin = createSupabaseAdminClient();
 
     // 2. Fetch the existing pending order from database
-    const { data: existingOrder, error: checkError } = await supabaseAdmin
+    let { data: existingOrder, error: checkError } = await supabaseAdmin
       .from('orders')
-      .select('id, status, amount, customer_email, customer_name, customer_phone, user_id')
+      .select('id, status, amount, customer_email, customer_name, customer_phone, user_id, email_delivery_status')
       .eq('razorpay_order_id', razorpay_order_id)
       .single();
+
+    if (checkError && (checkError.code === '42703' || checkError.code === 'PGRST204' || (typeof checkError.message === 'string' && checkError.message.includes('email_delivery_status')))) {
+      const fallback = await supabaseAdmin
+        .from('orders')
+        .select('id, status, amount, customer_email, customer_name, customer_phone, user_id')
+        .eq('razorpay_order_id', razorpay_order_id)
+        .single();
+      existingOrder = fallback.data as any;
+      checkError = fallback.error;
+    }
 
     if (checkError && checkError.code !== 'PGRST116') {
       console.error('Supabase status check error:', JSON.stringify(checkError));
@@ -111,8 +122,25 @@ export async function POST(req: Request) {
       );
     }
 
-    // Idempotent delivery check: if already paid, return 200 without sending duplicate emails
+    // Idempotent delivery check: if already paid, verify delivery status and retry email if failed
     if (existingOrder.status === 'paid') {
+      // If delivery already confirmed, do not resend
+      if ((existingOrder as any).email_delivery_status === 'delivered') {
+        return NextResponse.json({ success: true, message: 'Payment already verified' }, { status: 200 });
+      }
+
+      // If email delivery previously failed, retry delivery
+      if ((existingOrder as any).email_delivery_status === 'failed') {
+        try {
+          const retryResult = await sendOrderReceiptEmail(existingOrder.id, supabaseAdmin);
+          if (retryResult.success) {
+            return NextResponse.json({ success: true, message: 'Payment verified and receipt delivered successfully' }, { status: 200 });
+          }
+        } catch (retryErr) {
+          console.error('Failed to retry email delivery for existing order:', retryErr);
+        }
+      }
+
       return NextResponse.json({ success: true, message: 'Payment already verified' }, { status: 200 });
     }
 
@@ -153,16 +181,28 @@ export async function POST(req: Request) {
       );
     }
 
-    if (payment.currency && payment.currency.toUpperCase() !== 'INR') {
+    if (!payment.currency || typeof payment.currency !== 'string' || payment.currency.toUpperCase() !== 'INR') {
       return NextResponse.json(
-        { error: 'Payment currency does not match.' },
+        { error: 'Payment currency does not match or is missing. Expected INR.' },
         { status: 400 }
       );
     }
 
-    if (payment.status !== 'captured' && payment.status !== 'authorized') {
+    if (payment.status === 'authorized') {
+      try {
+        payment = await razorpay.payments.capture(razorpay_payment_id, expectedAmountPaise, 'INR');
+      } catch (captureErr) {
+        console.error('Failed to capture authorized Razorpay payment:', captureErr);
+        return NextResponse.json(
+          { error: 'Payment authorization could not be captured. Money was not collected.' },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (payment.status !== 'captured') {
       return NextResponse.json(
-        { error: `Payment is not in an accepted state (status: ${payment.status}).` },
+        { error: `Payment is not in an accepted state (status: ${payment.status}). Orders can only be fulfilled for captured payments.` },
         { status: 400 }
       );
     }
@@ -174,7 +214,8 @@ export async function POST(req: Request) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updatePayload: any = { 
       status: 'paid', 
-      razorpay_payment_id: razorpay_payment_id 
+      razorpay_payment_id: razorpay_payment_id,
+      email_delivery_status: 'pending'
     };
 
     if (verifiedUserId) {
@@ -194,10 +235,14 @@ export async function POST(req: Request) {
       err &&
       (err.code === '42703' ||
         err.code === 'PGRST204' ||
-        (typeof err.message === 'string' && (err.message.includes('user_id') || err.message.includes('schema cache'))));
+        (typeof err.message === 'string' &&
+          (err.message.includes('user_id') ||
+            err.message.includes('email_delivery_status') ||
+            err.message.includes('schema cache'))));
 
-    if (dbError && isColErr(dbError) && updatePayload.user_id) {
+    if (dbError && isColErr(dbError) && (updatePayload.user_id || updatePayload.email_delivery_status)) {
       delete updatePayload.user_id;
+      delete updatePayload.email_delivery_status;
       const retry = await supabaseAdmin
         .from('orders')
         .update(updatePayload)
@@ -336,8 +381,25 @@ export async function POST(req: Request) {
           subject: `Your receipt for ${product.name} — ORD-${shortId}`,
           html: emailHtml,
         });
+
+        try {
+          await supabaseAdmin
+            .from('orders')
+            .update({ email_delivery_status: 'delivered' })
+            .eq('id', updatedOrder.id);
+        } catch {
+          // Ignored if column pending migration
+        }
       } catch (emailError) {
         console.error('Payment verified, but email failed to send:', emailError);
+        try {
+          await supabaseAdmin
+            .from('orders')
+            .update({ email_delivery_status: 'failed' })
+            .eq('id', updatedOrder.id);
+        } catch {
+          // Ignored if column pending migration
+        }
       }
     }
 

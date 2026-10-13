@@ -108,6 +108,37 @@ describe('POST /api/create-order', () => {
     expect(data.error).toContain('unavailable for purchase');
   });
 
+  it('should reject ordering a product with missing/null status with 404', async () => {
+    const mockFrom = mockSupabase.from as jest.Mock;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { price: 500, name: 'Missing Status Product', status: null },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      customerName: 'Test User',
+      customerEmail: 'test@example.com',
+      productId: 'prod_null_status',
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.error).toContain('unavailable for purchase');
+  });
+
   it('should create an order successfully and ignore forged client userId', async () => {
     let insertedOrderPayload: any = null;
     const mockFrom = mockSupabase.from as jest.Mock;

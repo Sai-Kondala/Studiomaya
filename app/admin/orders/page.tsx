@@ -1,13 +1,13 @@
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
-import Link from 'next/link';
+import { AdminResendReceiptButton } from '@/components/AdminResendReceiptButton';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminOrders() {
   const supabase = createSupabaseAdminClient();
-  const { data: orders, error } = await supabase
+  const { data: orders } = await supabase
     .from('orders')
-    .select('id, customer_name, customer_email, customer_phone, status, amount, created_at, razorpay_order_id')
+    .select('id, customer_name, customer_email, customer_phone, status, amount, created_at, razorpay_order_id, email_delivery_status')
     .order('created_at', { ascending: false });
 
   return (
@@ -25,8 +25,10 @@ export default async function AdminOrders() {
               <th className="px-6 py-4 font-medium">Email</th>
               <th className="px-6 py-4 font-medium">Phone Number</th>
               <th className="px-6 py-4 font-medium">Status</th>
+              <th className="px-6 py-4 font-medium">Email Delivery</th>
               <th className="px-6 py-4 font-medium">Amount</th>
               <th className="px-6 py-4 font-medium">Date</th>
+              <th className="px-6 py-4 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
@@ -37,8 +39,10 @@ export default async function AdminOrders() {
                 year: 'numeric', month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata'
               });
 
+              const deliveryStatus = (order as any).email_delivery_status || 'pending';
+
               return (
-                <tr key={order.id} className="hover:bg-gray-50 cursor-pointer">
+                <tr key={order.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 font-medium text-gray-900">ORD-{shortId}</td>
                   <td className="px-6 py-4 text-gray-900">{order.customer_name || '—'}</td>
                   <td className="px-6 py-4 text-gray-500">{order.customer_email || '—'}</td>
@@ -48,14 +52,30 @@ export default async function AdminOrders() {
                       {order.status || 'Pending'}
                     </span>
                   </td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                      deliveryStatus === 'delivered' 
+                        ? 'bg-blue-100 text-blue-700' 
+                        : deliveryStatus === 'failed'
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}>
+                      {deliveryStatus}
+                    </span>
+                  </td>
                   <td className="px-6 py-4 font-medium">₹{order.amount || 0}</td>
                   <td className="px-6 py-4 text-gray-500">{date}</td>
+                  <td className="px-6 py-4 text-right">
+                    {order.status === 'paid' && (
+                      <AdminResendReceiptButton orderId={order.id} />
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {(!orders || orders.length === 0) && (
               <tr>
-                <td colSpan={7} className="px-6 py-8 text-center text-gray-500">No orders found.</td>
+                <td colSpan={9} className="px-6 py-8 text-center text-gray-500">No orders found.</td>
               </tr>
             )}
           </tbody>
