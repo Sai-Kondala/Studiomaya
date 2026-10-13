@@ -79,7 +79,7 @@ export async function POST(req: Request) {
     // 2. Fetch the existing pending order from database
     const { data: existingOrder, error: checkError } = await supabaseAdmin
       .from('orders')
-      .select('id, status, amount, customer_email, customer_name, customer_phone')
+      .select('id, status, amount, customer_email, customer_name, customer_phone, user_id')
       .eq('razorpay_order_id', razorpay_order_id)
       .single();
 
