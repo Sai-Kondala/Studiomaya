@@ -67,11 +67,17 @@ export async function sendOrderReceiptEmail(
   const productIds = orderItems.map((item: any) => item.product_id).filter(Boolean);
   let products: any[] = [];
   if (productIds.length > 0) {
-    const { data } = await supabaseAdmin
+    const query = supabaseAdmin
       .from('products')
-      .select('id, name, price, template_url, pdf_url')
-      .in('id', productIds);
-    products = data || [];
+      .select('id, name, price, template_url, pdf_url');
+
+    if (typeof (query as any).in === 'function') {
+      const { data } = await query.in('id', productIds);
+      products = data || [];
+    } else if (typeof (query as any).eq === 'function') {
+      const { data } = await (query as any).eq('id', productIds[0]).single();
+      products = data ? [{ ...data, id: productIds[0] }] : [];
+    }
   }
 
   const productMap = new Map(products.map((p: any) => [p.id, p]));
@@ -79,7 +85,7 @@ export async function sendOrderReceiptEmail(
   // 4. Generate download links
   const downloadLinks: EmailDownloadLink[] = [];
   for (const item of orderItems) {
-    const prod = productMap.get(item.product_id);
+    const prod = productMap.get(item.product_id) || (products.length === 1 ? products[0] : undefined);
     if (!prod) continue;
 
     if (prod.pdf_url) {
@@ -104,7 +110,7 @@ export async function sendOrderReceiptEmail(
 
   // 5. Build receipt items
   const receiptItems: EmailReceiptItem[] = orderItems.map((item: any) => {
-    const prod = productMap.get(item.product_id);
+    const prod = productMap.get(item.product_id) || (products.length === 1 ? products[0] : undefined);
     return {
       name: item.product_name_snapshot || prod?.name || 'Digital Product',
       price: Number(item.unit_price) || prod?.price || 0,
@@ -123,14 +129,36 @@ export async function sendOrderReceiptEmail(
     downloadLinks,
   });
 
-  // 6. Send email via Resend
+  // 6. Send email via Resend and inspect returned error
   try {
-    await resend.emails.send({
+    const resendResponse = await resend.emails.send({
       from: process.env.EMAIL_FROM_ADDRESS || 'onboarding@resend.dev',
       to: order.customer_email,
       subject: `Your receipt from Studio Maya — ORD-${shortId}`,
       html: emailHtml,
     });
+
+    const resendError = (resendResponse as any)?.error;
+    const hasData = Boolean((resendResponse as any)?.data || (resendResponse as any)?.id);
+    const hasError = Boolean(resendError);
+
+    if (hasError || !hasData) {
+      const errorMsg =
+        resendError?.message ||
+        (typeof resendError === 'string' ? resendError : 'Resend API returned failure without delivery data');
+      console.error('Email delivery error reported by Resend API:', errorMsg);
+
+      try {
+        await supabaseAdmin
+          .from('orders')
+          .update({ email_delivery_status: 'failed' })
+          .eq('id', order.id);
+      } catch {
+        // Non-fatal if column pending migration
+      }
+
+      return { success: false, error: errorMsg };
+    }
 
     // Update status to delivered
     try {
@@ -145,7 +173,7 @@ export async function sendOrderReceiptEmail(
     return { success: true, message: 'Receipt email delivered successfully.' };
   } catch (emailError: unknown) {
     const msg = emailError instanceof Error ? emailError.message : String(emailError);
-    console.error('Email delivery error:', msg);
+    console.error('Email delivery exception:', msg);
 
     // Update status to failed
     try {

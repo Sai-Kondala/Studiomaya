@@ -4,34 +4,7 @@ import Razorpay from 'razorpay';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import { linkOrCreateCustomer } from '@/lib/customer';
-import { generateThermalReceiptEmailHtml, EmailDownloadLink } from '@/lib/emailReceiptTemplate';
-import { Resend } from 'resend';
 import { sendOrderReceiptEmail } from '@/lib/orderEmailDelivery';
-
-const resend = new Resend(process.env.EMAIL_PROVIDER_API_KEY);
-
-async function createProductDownloadUrl(
-  supabaseAdmin: ReturnType<typeof createSupabaseAdminClient>,
-  pdfPath: string
-) {
-  const normalizedPath = pdfPath.replace(/^\/+/, '');
-
-  // Generate 24-hour temporary signed download link for email delivery
-  const { data, error } = await supabaseAdmin.storage
-    .from('product-files')
-    .createSignedUrl(
-      normalizedPath,
-      60 * 60 * 24,
-      { download: true }
-    );
-
-  if (error || !data?.signedUrl) {
-    console.error('Failed to create download link:', error?.message);
-    return null;
-  }
-
-  return data.signedUrl;
-}
 
 export async function POST(req: Request) {
   try {
@@ -207,9 +180,15 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4. Derive customer user ID securely from validated server session
+    // 4. Derive customer user ID securely: preserve existing owner, or link unowned order if identity matches
     const authUser = await getAuthenticatedUser();
-    const verifiedUserId = authUser?.id || existingOrder.user_id || null;
+    let verifiedUserId: string | null = existingOrder.user_id || null;
+
+    if (!verifiedUserId && authUser?.id && authUser.email && existingOrder.customer_email) {
+      if (authUser.email.trim().toLowerCase() === existingOrder.customer_email.trim().toLowerCase()) {
+        verifiedUserId = authUser.id;
+      }
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updatePayload: any = { 
@@ -305,102 +284,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // 7. Fetch product details from order_items
-    const { data: orderItems, error: itemsError } = await supabaseAdmin
-      .from('order_items')
-      .select('product_id')
-      .eq('order_id', updatedOrder.id);
-
-    if (
-      itemsError ||
-      !orderItems ||
-      orderItems.length !== 1 ||
-      !orderItems[0]?.product_id
-    ) {
-      return NextResponse.json(
-        { error: 'Order items could not be retrieved.' },
-        { status: 500 }
-      );
-    }
-
-    const { data: product } = await supabaseAdmin
-      .from('products')
-      .select('name, price, template_url, pdf_url')
-      .eq('id', orderItems[0].product_id)
-      .single();
-
-    if (product && updatedOrder.customer_email) {
-      const downloadLinks: EmailDownloadLink[] = [];
-      
-      if (product.pdf_url) {
-        const fileUrl = await createProductDownloadUrl(
-          supabaseAdmin,
-          product.pdf_url
-        );
-
-        if (!fileUrl) {
-          return NextResponse.json(
-            {
-              error: 'Download link generation failed. Please contact support.'
-            },
-            { status: 500 }
-          );
-        }
-
-        downloadLinks.push({
-          productName: product.name,
-          url: fileUrl,
-          type: 'pdf',
-        });
-      }
-      
-      if (product.template_url) {
-        downloadLinks.push({
-          productName: product.name,
-          url: product.template_url,
-          type: 'template',
-        });
-      }
-
-      const shortId = updatedOrder.id ? updatedOrder.id.split('-')[0].toUpperCase() : 'ORD';
-      const orderAmt = Number(updatedOrder.amount) || product.price;
-
-      const emailHtml = generateThermalReceiptEmailHtml({
-        orderNumber: `ORD-${shortId}`,
-        customerName: updatedOrder.customer_name || 'Valued Creator',
-        customerEmail: updatedOrder.customer_email,
-        items: [{ name: product.name, price: orderAmt }],
-        totalAmount: orderAmt,
-        downloadLinks,
-      });
-
-      try {
-        await resend.emails.send({
-          from: process.env.EMAIL_FROM_ADDRESS || 'onboarding@resend.dev',
-          to: updatedOrder.customer_email,
-          subject: `Your receipt for ${product.name} — ORD-${shortId}`,
-          html: emailHtml,
-        });
-
-        try {
-          await supabaseAdmin
-            .from('orders')
-            .update({ email_delivery_status: 'delivered' })
-            .eq('id', updatedOrder.id);
-        } catch {
-          // Ignored if column pending migration
-        }
-      } catch (emailError) {
-        console.error('Payment verified, but email failed to send:', emailError);
-        try {
-          await supabaseAdmin
-            .from('orders')
-            .update({ email_delivery_status: 'failed' })
-            .eq('id', updatedOrder.id);
-        } catch {
-          // Ignored if column pending migration
-        }
-      }
+    // 7. Deliver receipt email and download links using consolidated delivery service
+    const deliveryResult = await sendOrderReceiptEmail(updatedOrder.id, supabaseAdmin);
+    if (!deliveryResult.success) {
+      console.warn(`Receipt email dispatch failed for order ${updatedOrder.id}:`, deliveryResult.error);
     }
 
     return NextResponse.json({ success: true, message: 'Payment verified successfully' }, { status: 200 });

@@ -52,20 +52,38 @@ export async function GET(request: Request) {
     const supabaseAdmin = createSupabaseAdminClient();
 
     // 1. Verify that this order exists, is paid, and belongs to this authenticated user
-    const { data: order, error: orderError } = await supabaseAdmin
+    let { data: order, error: orderError } = await supabaseAdmin
       .from('orders')
-      .select('id, status, customer_email')
+      .select('id, status, customer_email, user_id')
       .eq('id', orderId)
       .maybeSingle();
+
+    if (orderError && (orderError.code === '42703' || orderError.code === 'PGRST204' || (typeof orderError.message === 'string' && orderError.message.includes('user_id')))) {
+      const fallback = await supabaseAdmin
+        .from('orders')
+        .select('id, status, customer_email')
+        .eq('id', orderId)
+        .maybeSingle();
+      order = fallback.data as any;
+      orderError = fallback.error;
+    }
 
     if (orderError || !order) {
       return NextResponse.json({ error: 'Order not found.' }, { status: 404 });
     }
 
-    // Ownership check: Verified user_id or verified account email must match
+    // Ownership check: If order has an assigned user_id, that user_id MUST match user.id.
+    // If order has no assigned user_id (guest order), verified account email must match order customer_email.
     const userEmail = user.email?.trim().toLowerCase();
     const orderEmail = order.customer_email?.trim().toLowerCase();
-    const isOwner = ((order as any).user_id && (order as any).user_id === user.id) || (userEmail && orderEmail === userEmail);
+    const orderUserId = (order as any).user_id;
+
+    let isOwner = false;
+    if (orderUserId) {
+      isOwner = orderUserId === user.id;
+    } else if (userEmail && orderEmail) {
+      isOwner = orderEmail === userEmail;
+    }
 
     if (!isOwner) {
       return NextResponse.json({ error: 'You do not have permission to access this order.' }, { status: 403 });

@@ -312,4 +312,99 @@ describe('GET /api/account/download', () => {
     expect(res.status).toBe(400);
     expect(data.error).toContain('untrusted or invalid');
   });
+
+  it('should allow download when order.user_id matches authenticated user.id', async () => {
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue({
+      id: 'user_owner',
+      email: 'owner@example.com',
+    });
+
+    mockSupabaseAdmin.from.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({
+                  data: {
+                    id: 'order_owned',
+                    status: 'paid',
+                    customer_email: 'different_email@example.com',
+                    user_id: 'user_owner',
+                  },
+                  error: null,
+                }),
+            }),
+          }),
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: () => Promise.resolve({ data: { id: 'item_1' }, error: null }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () =>
+                Promise.resolve({
+                  data: { id: 'prod_1', name: 'Product 1', pdf_url: 'file.pdf' },
+                  error: null,
+                }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({ orderId: 'order_owned', productId: 'prod_1' });
+    const res = await GET(req);
+
+    expect([302, 307]).toContain(res.status);
+    expect(res.headers.get('location')).toBe('https://storage.supabase.co/signed/product.pdf');
+  });
+
+  it('should forbid download when order.user_id belongs to another user even if email matches', async () => {
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue({
+      id: 'user_other',
+      email: 'shared@example.com',
+    });
+
+    mockSupabaseAdmin.from.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({
+                  data: {
+                    id: 'order_other_owner',
+                    status: 'paid',
+                    customer_email: 'shared@example.com',
+                    user_id: 'user_original_owner', // assigned to another user!
+                  },
+                  error: null,
+                }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({ orderId: 'order_other_owner', productId: 'prod_1' });
+    const res = await GET(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error).toContain('do not have permission');
+  });
 });

@@ -5,34 +5,7 @@ import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import { linkOrCreateCustomer } from '@/lib/customer';
 import { clearUserCart } from '@/lib/cartService';
-import { generateThermalReceiptEmailHtml, EmailDownloadLink, EmailReceiptItem } from '@/lib/emailReceiptTemplate';
-import { Resend } from 'resend';
 import { sendOrderReceiptEmail } from '@/lib/orderEmailDelivery';
-
-const resend = new Resend(process.env.EMAIL_PROVIDER_API_KEY);
-
-async function createProductDownloadUrl(
-  supabaseAdmin: ReturnType<typeof createSupabaseAdminClient>,
-  pdfPath: string
-) {
-  const normalizedPath = pdfPath.replace(/^\/+/, '');
-
-  // Generate 24-hour temporary signed download link for email delivery
-  const { data, error } = await supabaseAdmin.storage
-    .from('product-files')
-    .createSignedUrl(
-      normalizedPath,
-      60 * 60 * 24,
-      { download: true }
-    );
-
-  if (error || !data?.signedUrl) {
-    console.error('Failed to create download link:', error?.message);
-    return null;
-  }
-
-  return data.signedUrl;
-}
 
 export async function POST(req: Request) {
   try {
@@ -194,9 +167,15 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4. Derive customer user ID securely from validated server session
+    // 4. Derive customer user ID securely: preserve existing owner, or link unowned order if identity matches
     const authUser = await getAuthenticatedUser();
-    const verifiedUserId = authUser?.id || existingOrder.user_id || null;
+    let verifiedUserId: string | null = existingOrder.user_id || null;
+
+    if (!verifiedUserId && authUser?.id && authUser.email && existingOrder.customer_email) {
+      if (authUser.email.trim().toLowerCase() === existingOrder.customer_email.trim().toLowerCase()) {
+        verifiedUserId = authUser.id;
+      }
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updatePayload: any = {
@@ -310,108 +289,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // 8. Fetch order items to deliver products
-    const { data: orderItems, error: itemsError } = await supabaseAdmin
-      .from('order_items')
-      .select('product_id, unit_price, product_name_snapshot')
-      .eq('order_id', updatedOrder.id);
-
-    if (itemsError || !orderItems || orderItems.length === 0) {
-      return NextResponse.json(
-        { error: 'Payment verified, but order items could not be retrieved.' },
-        { status: 500 }
-      );
-    }
-
-    const productIds = orderItems.map(item => item.product_id);
-    const { data: products } = await supabaseAdmin
-      .from('products')
-      .select('id, name, price, template_url, pdf_url')
-      .in('id', productIds);
-
-    if (products && products.length > 0 && updatedOrder.customer_email) {
-      const downloadLinks: EmailDownloadLink[] = [];
-
-      for (const product of products) {
-        if (product.pdf_url) {
-          const fileUrl = await createProductDownloadUrl(
-            supabaseAdmin,
-            product.pdf_url
-          );
-
-          if (!fileUrl) {
-            return NextResponse.json(
-              {
-                error: `Download link generation failed for ${product.name}.`
-              },
-              { status: 500 }
-            );
-          }
-
-          downloadLinks.push({
-            productName: product.name,
-            url: fileUrl,
-            type: 'pdf',
-          });
-        }
-        if (product.template_url) {
-          downloadLinks.push({
-            productName: product.name,
-            url: product.template_url,
-            type: 'template',
-          });
-        }
-      }
-
-      const receiptItems: EmailReceiptItem[] = orderItems.map((item) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const raw = item as any;
-        const prod = products.find((p) => p.id === raw.product_id);
-        return {
-          name: raw.product_name_snapshot || prod?.name || 'Digital Product',
-          price: Number(raw.unit_price) || prod?.price || 0,
-        };
-      });
-
-      const shortId = updatedOrder.id ? updatedOrder.id.split('-')[0].toUpperCase() : 'ORD';
-      const orderAmt = Number(updatedOrder.amount) || receiptItems.reduce((acc, i) => acc + i.price, 0);
-
-      const emailHtml = generateThermalReceiptEmailHtml({
-        orderNumber: `ORD-${shortId}`,
-        customerName: updatedOrder.customer_name || 'Valued Creator',
-        customerEmail: updatedOrder.customer_email,
-        items: receiptItems,
-        totalAmount: orderAmt,
-        downloadLinks,
-      });
-
-      try {
-        await resend.emails.send({
-          from: process.env.EMAIL_FROM_ADDRESS || 'onboarding@resend.dev',
-          to: updatedOrder.customer_email,
-          subject: `Your receipt from Studio Maya — ORD-${shortId}`,
-          html: emailHtml,
-        });
-
-        try {
-          await supabaseAdmin
-            .from('orders')
-            .update({ email_delivery_status: 'delivered' })
-            .eq('id', updatedOrder.id);
-        } catch {
-          // Ignored if column pending migration
-        }
-      } catch (emailError) {
-        console.error('Payment verified, but email failed to send:', emailError);
-        try {
-          await supabaseAdmin
-            .from('orders')
-            .update({ email_delivery_status: 'failed' })
-            .eq('id', updatedOrder.id);
-        } catch {
-          // Ignored if column pending migration
-        }
-      }
+    // 8. Deliver receipt email and download links using consolidated delivery service
+    const deliveryResult = await sendOrderReceiptEmail(updatedOrder.id, supabaseAdmin);
+    if (!deliveryResult.success) {
+      console.warn(`Cart receipt email dispatch failed for order ${updatedOrder.id}:`, deliveryResult.error);
     }
 
     return NextResponse.json({ success: true, message: 'Cart Payment verified successfully' }, { status: 200 });

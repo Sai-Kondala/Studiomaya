@@ -1,11 +1,16 @@
 import { POST } from '@/app/api/verify-payment/route';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
+import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import crypto from 'crypto';
 import { Resend } from 'resend';
 import Razorpay from 'razorpay';
 
 jest.mock('@/lib/supabaseAdmin', () => ({
   createSupabaseAdminClient: jest.fn(),
+}));
+
+jest.mock('@/lib/supabaseServer', () => ({
+  getAuthenticatedUser: jest.fn(),
 }));
 
 let mockResendSend: jest.Mock;
@@ -34,6 +39,7 @@ describe('POST /api/verify-payment', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockResendSend = jest.fn().mockResolvedValue({ id: 'email_123' });
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue(null);
 
     process.env.RAZORPAY_KEY_ID = 'test_key';
     process.env.RAZORPAY_KEY_SECRET = 'test_secret';
@@ -582,5 +588,325 @@ describe('POST /api/verify-payment', () => {
 
     expect(res.status).toBe(400);
     expect(data.error).toBe('Razorpay signature did not match. Check that the server secret belongs to the same Razorpay key used at checkout.');
+  });
+
+  it('should mark delivery as failed when Resend returns error response without throwing', async () => {
+    const validSignature = generateSignature('order_rzp_123', 'pay_123');
+    mockResendSend.mockResolvedValue({
+      data: null,
+      error: { message: 'Domain verification required', name: 'validation_error' },
+    });
+
+    let recordedDeliveryStatus = '';
+    const mockFrom = mockSupabase.from as jest.Mock;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { id: 'order_123', status: 'pending', amount: 500, customer_email: 'test@example.com' },
+                error: null
+              }),
+            }),
+          }),
+          update: (payload: any) => {
+            if (payload.email_delivery_status) {
+              recordedDeliveryStatus = payload.email_delivery_status;
+            }
+            return {
+              eq: () => ({
+                neq: () => ({
+                  select: () => ({
+                    maybeSingle: () => Promise.resolve({
+                      data: { id: 'order_123', status: 'paid', amount: 500, customer_email: 'test@example.com' },
+                      error: null
+                    }),
+                  }),
+                }),
+              }),
+            };
+          },
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          select: () => ({
+            eq: () => Promise.resolve({
+              data: [{ product_id: 'prod_1' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { name: 'Test Product', pdf_url: 'test.pdf' },
+                error: null,
+              })
+            })
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      razorpay_order_id: 'order_rzp_123',
+      razorpay_payment_id: 'pay_123',
+      razorpay_signature: validSignature,
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(recordedDeliveryStatus).toBe('failed');
+  });
+
+  it('should preserve existing order.user_id even if a different user verifies payment', async () => {
+    const validSignature = generateSignature('order_rzp_123', 'pay_123');
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue({
+      id: 'user_different',
+      email: 'different@example.com',
+    });
+
+    let updatedUserId: any = null;
+    const mockFrom = mockSupabase.from as jest.Mock;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: {
+                  id: 'order_123',
+                  status: 'pending',
+                  amount: 500,
+                  customer_email: 'original@example.com',
+                  user_id: 'user_original_owner',
+                },
+                error: null,
+              }),
+            }),
+          }),
+          update: (payload: any) => {
+            if ('user_id' in payload) {
+              updatedUserId = payload.user_id;
+            }
+            return {
+              eq: () => ({
+                neq: () => ({
+                  select: () => ({
+                    maybeSingle: () => Promise.resolve({
+                      data: { id: 'order_123', status: 'paid', amount: 500, customer_email: 'original@example.com' },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          },
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          select: () => ({
+            eq: () => Promise.resolve({
+              data: [{ product_id: 'prod_1' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { name: 'Test Product', pdf_url: 'test.pdf' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      razorpay_order_id: 'order_rzp_123',
+      razorpay_payment_id: 'pay_123',
+      razorpay_signature: validSignature,
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(updatedUserId).toBe('user_original_owner');
+  });
+
+  it('should not link unowned order to authenticated user if email does not match', async () => {
+    const validSignature = generateSignature('order_rzp_123', 'pay_123');
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue({
+      id: 'user_attacker',
+      email: 'attacker@example.com',
+    });
+
+    const orderUpdates: any[] = [];
+    const mockFrom = mockSupabase.from as jest.Mock;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: {
+                  id: 'order_123',
+                  status: 'pending',
+                  amount: 500,
+                  customer_email: 'buyer@example.com',
+                  user_id: null,
+                },
+                error: null,
+              }),
+            }),
+          }),
+          update: (payload: any) => {
+            orderUpdates.push(payload);
+            return {
+              eq: () => ({
+                neq: () => ({
+                  select: () => ({
+                    maybeSingle: () => Promise.resolve({
+                      data: { id: 'order_123', status: 'paid', amount: 500, customer_email: 'buyer@example.com' },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          },
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          select: () => ({
+            eq: () => Promise.resolve({
+              data: [{ product_id: 'prod_1' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { name: 'Test Product', pdf_url: 'test.pdf' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      razorpay_order_id: 'order_rzp_123',
+      razorpay_payment_id: 'pay_123',
+      razorpay_signature: validSignature,
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    orderUpdates.forEach((payload) => {
+      expect(payload.user_id).toBeUndefined();
+    });
+  });
+
+  it('should link unowned order to authenticated user when customer_email matches', async () => {
+    const validSignature = generateSignature('order_rzp_123', 'pay_123');
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue({
+      id: 'user_legit',
+      email: 'buyer@example.com',
+    });
+
+    const orderUpdates: any[] = [];
+    const mockFrom = mockSupabase.from as jest.Mock;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: {
+                  id: 'order_123',
+                  status: 'pending',
+                  amount: 500,
+                  customer_email: 'buyer@example.com',
+                  user_id: null,
+                },
+                error: null,
+              }),
+            }),
+          }),
+          update: (payload: any) => {
+            orderUpdates.push(payload);
+            return {
+              eq: () => ({
+                neq: () => ({
+                  select: () => ({
+                    maybeSingle: () => Promise.resolve({
+                      data: { id: 'order_123', status: 'paid', amount: 500, customer_email: 'buyer@example.com' },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            };
+          },
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          select: () => ({
+            eq: () => Promise.resolve({
+              data: [{ product_id: 'prod_1' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { name: 'Test Product', pdf_url: 'test.pdf' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      razorpay_order_id: 'order_rzp_123',
+      razorpay_payment_id: 'pay_123',
+      razorpay_signature: validSignature,
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const hasLinkedUser = orderUpdates.some((p) => p.user_id === 'user_legit');
+    expect(hasLinkedUser).toBe(true);
   });
 });
