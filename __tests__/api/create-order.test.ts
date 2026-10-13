@@ -247,4 +247,104 @@ describe('POST /api/create-order', () => {
     // Order compensation was triggered
     expect(deletedOrderId).toBe('order_rollback_123');
   });
+
+  it('should link verified session user when customerEmail matches authenticated user email', async () => {
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue({ id: 'user_matching_123', email: 'buyer@example.com' });
+
+    let insertedPayload: any = null;
+    const mockFrom = mockSupabase.from as jest.Mock;
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { price: 500, name: 'Test Product', status: 'Published' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'orders') {
+        return {
+          insert: (payload: any) => {
+            insertedPayload = payload;
+            return {
+              select: () => ({
+                single: () => Promise.resolve({ data: { id: 'order_123' }, error: null }),
+              }),
+            };
+          },
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          insert: () => Promise.resolve({ error: null }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      customerName: 'Buyer Name',
+      customerEmail: 'buyer@example.com',
+      productId: 'prod_123',
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(insertedPayload.user_id).toBe('user_matching_123');
+  });
+
+  it('should treat checkout as guest order when customerEmail differs from authenticated user email', async () => {
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue({ id: 'user_other_123', email: 'account@example.com' });
+
+    let insertedPayload: any = null;
+    const mockFrom = mockSupabase.from as jest.Mock;
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'products') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({
+                data: { price: 500, name: 'Test Product', status: 'Published' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'orders') {
+        return {
+          insert: (payload: any) => {
+            insertedPayload = payload;
+            return {
+              select: () => ({
+                single: () => Promise.resolve({ data: { id: 'order_123' }, error: null }),
+              }),
+            };
+          },
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          insert: () => Promise.resolve({ error: null }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      customerName: 'Recipient',
+      customerEmail: 'gift@example.com', // Different email from account
+      productId: 'prod_123',
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(insertedPayload.user_id).toBeUndefined();
+  });
 });

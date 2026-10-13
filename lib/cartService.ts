@@ -146,7 +146,24 @@ export async function getOrCreateCart(userId: string): Promise<string | null> {
  * Adds a product to the user's cart in Supabase. Refreshes the 7-day expiration window.
  */
 export async function addProductToCart(userId: string, productId: string) {
+  if (!productId || typeof productId !== 'string' || !productId.trim()) {
+    return false;
+  }
+  const cleanProductId = productId.trim();
   const supabase = createSupabaseAdminClient();
+
+  // 1. Confirm product exists and is Published before adding to cart
+  const { data: product, error: prodErr } = await supabase
+    .from('products')
+    .select('id, status')
+    .eq('id', cleanProductId)
+    .single();
+
+  if (prodErr || !product || product.status !== 'Published') {
+    console.warn(`Cannot add product ${cleanProductId} to cart: not found or not published.`);
+    return false;
+  }
+
   const cartId = await getOrCreateCart(userId);
   if (!cartId) {
     console.error(`Failed to get or create cart for user: ${userId}`);
@@ -158,7 +175,7 @@ export async function addProductToCart(userId: string, productId: string) {
     const { error: upsertError } = await supabase.from('cart_items').upsert(
       {
         cart_id: cartId,
-        product_id: productId,
+        product_id: cleanProductId,
       },
       { onConflict: 'cart_id,product_id' }
     );
@@ -276,37 +293,78 @@ export async function clearUserCart(userId: string) {
 
 /**
  * Merges anonymous local storage items into the user's database cart without duplicates.
+ * Validates product IDs, confirms products are Published, enforces reasonable limits,
+ * and handles database errors explicitly.
  */
 export async function mergeAnonymousCartIntoUser(userId: string, localProductIds: string[]) {
   if (!localProductIds || localProductIds.length === 0) {
     return getUserCartItems(userId);
   }
 
-  const supabase = createSupabaseAdminClient();
-  const cartId = await getOrCreateCart(userId);
-  if (!cartId) {
+  // 1. Sanitize and enforce limits on incoming product IDs (max 50 unique items)
+  const uniqueProductIds = Array.from(
+    new Set(
+      localProductIds
+        .filter((id) => typeof id === 'string' && id.trim().length > 0)
+        .map((id) => id.trim())
+    )
+  ).slice(0, 50);
+
+  if (uniqueProductIds.length === 0) {
     return getUserCartItems(userId);
   }
 
-  try {
-    // Deduplicate incoming IDs
-    const uniqueProductIds = Array.from(new Set(localProductIds.filter(Boolean)));
+  const supabase = createSupabaseAdminClient();
 
-    // Upsert items into cart_items
-    for (const pid of uniqueProductIds) {
-      await supabase.from('cart_items').upsert(
-        {
-          cart_id: cartId,
-          product_id: pid,
-        },
-        { onConflict: 'cart_id,product_id' }
-      );
-    }
+  // 2. Confirm products exist and are Published before merging
+  const { data: publishedProducts, error: prodError } = await supabase
+    .from('products')
+    .select('id, status')
+    .in('id', uniqueProductIds);
 
-    // Refresh cart activity timestamp
-    await supabase.from('carts').update({ updated_at: new Date().toISOString() }).eq('id', cartId);
-  } catch (err) {
-    console.warn('Error merging anonymous cart:', err);
+  if (prodError) {
+    console.error('Database error verifying products for cart merge:', prodError);
+    throw new Error(`Failed to verify products for cart merge: ${prodError.message}`);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const validPublishedIds = (publishedProducts || [])
+    .filter((p: any) => p.status === 'Published')
+    .map((p: any) => p.id);
+
+  if (validPublishedIds.length === 0) {
+    return getUserCartItems(userId);
+  }
+
+  // 3. Get or create active cart for user
+  const cartId = await getOrCreateCart(userId);
+  if (!cartId) {
+    throw new Error('Failed to create or retrieve cart for user');
+  }
+
+  // 4. Upsert valid items into cart_items, checking for database errors
+  const rows = validPublishedIds.map((pid) => ({
+    cart_id: cartId,
+    product_id: pid,
+  }));
+
+  const { error: upsertError } = await supabase
+    .from('cart_items')
+    .upsert(rows, { onConflict: 'cart_id,product_id' });
+
+  if (upsertError) {
+    console.error(`Database error during cart merge upsert for cart ${cartId}:`, upsertError);
+    throw new Error(`Database error merging items into cart: ${upsertError.message}`);
+  }
+
+  // 5. Refresh cart activity timestamp consistently
+  const { error: updateError } = await supabase
+    .from('carts')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', cartId);
+
+  if (updateError) {
+    console.warn(`Failed to refresh cart timestamp on merge for cart ${cartId}:`, updateError);
   }
 
   return getUserCartItems(userId);

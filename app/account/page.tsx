@@ -14,19 +14,41 @@ export default async function AccountOverviewPage() {
   }
 
   const supabaseAdmin = createSupabaseAdminClient();
+  const normalizedEmail = user.email ? user.email.trim().toLowerCase() : '';
 
-  // Fetch customer orders by email
-  const { data: orders, error: ordersError } = await supabaseAdmin
+  // Fetch customer orders: owned by authenticated user_id OR unclaimed guest orders matching email
+  let { data: rawOrders, error: ordersError } = await supabaseAdmin
     .from('orders')
-    .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id')
-    .eq('customer_email', user.email)
+    .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id, user_id, customer_email')
+    .or(`user_id.eq.${user.id},and(user_id.is.null,customer_email.ilike.${normalizedEmail})`)
     .order('created_at', { ascending: false });
+
+  // Fallback for environments where user_id column is pending
+  if (ordersError && (ordersError.code === '42703' || ordersError.code === 'PGRST204' || (typeof ordersError.message === 'string' && ordersError.message.includes('user_id')))) {
+    const fallback = await supabaseAdmin
+      .from('orders')
+      .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id, customer_email')
+      .ilike('customer_email', normalizedEmail)
+      .order('created_at', { ascending: false });
+    rawOrders = fallback.data as any;
+    ordersError = fallback.error;
+  }
 
   if (ordersError) {
     console.error('Error fetching customer orders in overview:', ordersError);
   }
 
-  const allOrders = orders || [];
+  // Enforce ownership:
+  // 1. If order has user_id, it must match user.id (never expose orders assigned to another user).
+  // 2. If order has no user_id (unclaimed guest), customer_email must match normalized user email.
+  const allOrders = (rawOrders || []).filter((order: any) => {
+    if (order.user_id) {
+      return order.user_id === user.id;
+    }
+    const orderEmail = order.customer_email ? order.customer_email.trim().toLowerCase() : '';
+    return orderEmail === normalizedEmail;
+  });
+
   const paidOrders = allOrders.filter((o) => o.status === 'paid');
   const totalPurchases = paidOrders.length;
   const recentOrders = allOrders.slice(0, 3);

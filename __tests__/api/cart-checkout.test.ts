@@ -164,8 +164,8 @@ describe('POST /api/cart-checkout', () => {
     expect(data.error).toContain('no longer available');
   });
 
-  it('should process cart checkout successfully and link verified session user', async () => {
-    (getAuthenticatedUser as jest.Mock).mockResolvedValue({ id: 'verified_user_abc' });
+  it('should process cart checkout successfully and link verified session user when email matches', async () => {
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue({ id: 'verified_user_abc', email: 'test@example.com' });
 
     let createdPayload: any = null;
     const mockFrom = mockSupabase.from as jest.Mock;
@@ -217,5 +217,59 @@ describe('POST /api/cart-checkout', () => {
     expect(data.orderId).toBe('order_rzp_123');
     expect(data.amount).toBe(30000); 
     expect(createdPayload.user_id).toBe('verified_user_abc');
+  });
+
+  it('should treat checkout as guest order when customerEmail differs from authenticated user email', async () => {
+    (getAuthenticatedUser as jest.Mock).mockResolvedValue({ id: 'verified_user_abc', email: 'account@example.com' });
+
+    let createdPayload: any = null;
+    const mockFrom = mockSupabase.from as jest.Mock;
+    
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'products') {
+        return {
+          select: () => ({
+            in: () => Promise.resolve({ 
+              data: [
+                { id: 'prod_1', price: 100, name: 'P1', status: 'Published' },
+                { id: 'prod_2', price: 200, name: 'P2', status: 'Published' }
+              ], 
+              error: null 
+            }),
+          }),
+        };
+      }
+      if (table === 'orders') {
+        return {
+          insert: (payload: any) => {
+            createdPayload = payload;
+            return {
+              select: () => ({
+                single: () => Promise.resolve({ data: { id: 'order_123' }, error: null }),
+              }),
+            };
+          },
+        };
+      }
+      if (table === 'order_items') {
+        return {
+          insert: () => Promise.resolve({ error: null }),
+        };
+      }
+      return {};
+    });
+
+    const req = createRequest({
+      productIds: ['prod_1', 'prod_2'],
+      customerName: 'Gift Recipient',
+      customerEmail: 'different@example.com', // Different email!
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.orderId).toBe('order_rzp_123');
+    expect(createdPayload.user_id).toBeUndefined();
   });
 });

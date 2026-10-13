@@ -24,32 +24,60 @@ export default async function CustomerOrdersPage({ searchParams }: PageProps) {
   const currentPage = Math.max(1, parseInt(pageParam || '1', 10));
 
   const supabaseAdmin = createSupabaseAdminClient();
+  const normalizedEmail = user.email.trim().toLowerCase();
 
-  const emailFilter = user.email.trim();
-
-  // 1. Fetch total count of customer's orders
-  const { count, error: countError } = await supabaseAdmin
+  // 1. Fetch total count of customer's orders (owned by user_id OR unclaimed guest matching normalized email)
+  let { count, error: countError } = await supabaseAdmin
     .from('orders')
     .select('id', { count: 'exact', head: true })
-    .ilike('customer_email', emailFilter);
+    .or(`user_id.eq.${user.id},and(user_id.is.null,customer_email.ilike.${normalizedEmail})`);
+
+  if (countError && (countError.code === '42703' || countError.code === 'PGRST204' || (typeof countError.message === 'string' && countError.message.includes('user_id')))) {
+    const fallbackCount = await supabaseAdmin
+      .from('orders')
+      .select('id', { count: 'exact', head: true })
+      .ilike('customer_email', normalizedEmail);
+    count = fallbackCount.count;
+    countError = fallbackCount.error;
+  }
 
   const totalOrders = count || 0;
   const totalPages = Math.ceil(totalOrders / PAGE_SIZE) || 1;
   const offset = (currentPage - 1) * PAGE_SIZE;
 
   // 2. Fetch paginated orders belonging strictly to this customer
-  const { data: orders, error: ordersError } = await supabaseAdmin
+  let { data: rawOrders, error: ordersError } = await supabaseAdmin
     .from('orders')
-    .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id')
-    .ilike('customer_email', emailFilter)
+    .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id, user_id, customer_email')
+    .or(`user_id.eq.${user.id},and(user_id.is.null,customer_email.ilike.${normalizedEmail})`)
     .order('created_at', { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
+
+  if (ordersError && (ordersError.code === '42703' || ordersError.code === 'PGRST204' || (typeof ordersError.message === 'string' && ordersError.message.includes('user_id')))) {
+    const fallbackOrders = await supabaseAdmin
+      .from('orders')
+      .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id, customer_email')
+      .ilike('customer_email', normalizedEmail)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1);
+    rawOrders = fallbackOrders.data as any;
+    ordersError = fallbackOrders.error;
+  }
 
   if (ordersError || countError) {
     console.error('Error fetching customer orders:', ordersError || countError);
   }
 
-  const orderList = orders || [];
+  // Enforce ownership:
+  // 1. If order has user_id, it must match user.id (never expose orders assigned to another user).
+  // 2. If order has no user_id (unclaimed guest), customer_email must match normalized user email.
+  const orderList = (rawOrders || []).filter((order: any) => {
+    if (order.user_id) {
+      return order.user_id === user.id;
+    }
+    const orderEmail = order.customer_email ? order.customer_email.trim().toLowerCase() : '';
+    return orderEmail === normalizedEmail;
+  });
   const orderIds = orderList.map((o) => o.id);
 
   // 3. Fetch order items for these orders

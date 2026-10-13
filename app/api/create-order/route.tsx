@@ -43,9 +43,15 @@ export async function POST(request: Request) {
       );
     }
 
-    // Derive user_id safely from verified server session, never trusting client-supplied userId
+    // Derive user_id safely: only assign to authenticated account if submitted email matches the account's verified email.
+    // If a signed-in user checks out with a different email, explicitly treat it as an unassigned guest order.
     const authUser = await getAuthenticatedUser();
-    const verifiedUserId = authUser?.id || null;
+    let verifiedUserId: string | null = null;
+    if (authUser?.id && authUser.email && customerEmail) {
+      if (authUser.email.trim().toLowerCase() === customerEmail.trim().toLowerCase()) {
+        verifiedUserId = authUser.id;
+      }
+    }
 
     const supabaseAdmin = createSupabaseAdminClient();
 

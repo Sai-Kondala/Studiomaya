@@ -84,15 +84,18 @@ export async function POST(req: Request) {
 
     // Idempotent delivery check: if already paid, verify delivery status and retry email if failed
     if (existingOrder.status === 'paid') {
-      // If delivery already confirmed, do not resend
-      if ((existingOrder as any).email_delivery_status === 'delivered') {
+      // If delivery already confirmed or queued/sent, do not resend
+      if (
+        (existingOrder as any).email_delivery_status === 'delivered' ||
+        (existingOrder as any).email_delivery_status === 'sent'
+      ) {
         return NextResponse.json({ success: true, message: 'Payment already verified' }, { status: 200 });
       }
 
       // If email delivery previously failed, retry delivery
       if ((existingOrder as any).email_delivery_status === 'failed') {
         try {
-          const retryResult = await sendOrderReceiptEmail(existingOrder.id, supabaseAdmin);
+          const retryResult = await sendOrderReceiptEmail(existingOrder.id, supabaseAdmin, { force: true });
           if (retryResult.success) {
             return NextResponse.json({ success: true, message: 'Cart Payment verified and receipt delivered successfully' }, { status: 200 });
           }

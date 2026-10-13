@@ -13,7 +13,7 @@ export async function resendOrderReceiptAction(orderId: string) {
   }
 
   const supabaseAdmin = createSupabaseAdminClient();
-  const result = await sendOrderReceiptEmail(orderId, supabaseAdmin);
+  const result = await sendOrderReceiptEmail(orderId, supabaseAdmin, { force: true });
 
   revalidatePath('/admin/orders');
 

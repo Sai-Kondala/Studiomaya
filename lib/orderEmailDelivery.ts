@@ -31,9 +31,14 @@ export interface SendReceiptResult {
   error?: string;
 }
 
+export interface SendReceiptOptions {
+  force?: boolean;
+}
+
 export async function sendOrderReceiptEmail(
   orderId: string,
-  client?: ReturnType<typeof createSupabaseAdminClient>
+  client?: ReturnType<typeof createSupabaseAdminClient>,
+  options?: SendReceiptOptions
 ): Promise<SendReceiptResult> {
   const supabaseAdmin = client || createSupabaseAdminClient();
   const resend = new Resend(process.env.EMAIL_PROVIDER_API_KEY);
@@ -51,6 +56,14 @@ export async function sendOrderReceiptEmail(
 
   if (!order.customer_email) {
     return { success: false, error: 'Order has no customer email address.' };
+  }
+
+  // Idempotency check: if already sent or delivered, don't duplicate unless explicitly forced
+  if (!options?.force && (order.email_delivery_status === 'sent' || order.email_delivery_status === 'delivered')) {
+    return {
+      success: true,
+      message: `Receipt email already ${order.email_delivery_status}.`,
+    };
   }
 
   // 2. Fetch order items
@@ -136,6 +149,9 @@ export async function sendOrderReceiptEmail(
       to: order.customer_email,
       subject: `Your receipt from Studio Maya — ORD-${shortId}`,
       html: emailHtml,
+      tags: [
+        { name: 'order_id', value: order.id },
+      ],
     });
 
     const resendError = (resendResponse as any)?.error;
@@ -160,17 +176,17 @@ export async function sendOrderReceiptEmail(
       return { success: false, error: errorMsg };
     }
 
-    // Update status to delivered
+    // Update status to 'sent' (delivery will be confirmed via Resend webhook)
     try {
       await supabaseAdmin
         .from('orders')
-        .update({ email_delivery_status: 'delivered' })
+        .update({ email_delivery_status: 'sent' })
         .eq('id', order.id);
     } catch {
       // Non-fatal if column pending migration
     }
 
-    return { success: true, message: 'Receipt email delivered successfully.' };
+    return { success: true, message: 'Receipt email dispatched successfully.' };
   } catch (emailError: unknown) {
     const msg = emailError instanceof Error ? emailError.message : String(emailError);
     console.error('Email delivery exception:', msg);

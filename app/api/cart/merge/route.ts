@@ -10,12 +10,23 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const productIds: string[] = Array.isArray(body.productIds) ? body.productIds : [];
+    if (!body || !Array.isArray(body.productIds)) {
+      return NextResponse.json({ error: 'productIds must be an array' }, { status: 400 });
+    }
+
+    const productIds: string[] = body.productIds
+      .filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0)
+      .map((id: string) => id.trim());
+
+    if (productIds.length > 50) {
+      return NextResponse.json({ error: 'Cart merge exceeds maximum limit of 50 items.' }, { status: 400 });
+    }
 
     const { items, expired } = await mergeAnonymousCartIntoUser(user.id, productIds);
     return NextResponse.json({ success: true, items, expired });
-  } catch (error) {
-    console.error('Cart merge API error:', error);
-    return NextResponse.json({ error: 'Failed to merge cart' }, { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to merge cart';
+    console.error('Cart merge API error:', message);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
