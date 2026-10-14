@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
+import { checkRateLimitDistributed, getClientIp, rateLimitResponse } from '@/lib/rateLimit';
+import { logger } from '@/lib/logger';
 
 /**
  * Validates external template destination URLs to protect customers
@@ -36,6 +38,15 @@ function isValidTemplateRedirect(urlStr: string): boolean {
 
 export async function GET(request: Request) {
   try {
+    if (process.env.NODE_ENV !== 'test') {
+      const clientIp = getClientIp(request);
+      const rateLimit = await checkRateLimitDistributed(`download_${clientIp}`, { limit: 40, windowMs: 60_000 });
+      if (!rateLimit.allowed) {
+        logger.warn('Rate limit exceeded on download link generation', { ip: clientIp });
+        return rateLimitResponse(rateLimit.resetMs);
+      }
+    }
+
     const user = await getAuthenticatedUser();
     if (!user) {
       return NextResponse.json({ error: 'Please sign in to download your files.' }, { status: 401 });

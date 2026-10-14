@@ -1,13 +1,21 @@
 import {
   checkRateLimit,
+  checkRateLimitDistributed,
   getClientIp,
   rateLimitResponse,
   clearRateLimitStore,
 } from '@/lib/rateLimit';
 
 describe('Rate Limiter', () => {
+  const originalEnv = process.env;
+
   beforeEach(() => {
     clearRateLimitStore();
+    process.env = { ...originalEnv };
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
   });
 
   describe('getClientIp', () => {
@@ -81,6 +89,54 @@ describe('Rate Limiter', () => {
       // client_B was not called twice
       const rC = checkRateLimit('client_C', opt);
       expect(rC.allowed).toBe(true);
+    });
+  });
+
+  describe('checkRateLimitDistributed', () => {
+    it('falls back to local memory store when Upstash is not configured', async () => {
+      const res = await checkRateLimitDistributed('dist_test_client', { limit: 5 });
+      expect(res.allowed).toBe(true);
+      expect(res.remaining).toBe(4);
+    });
+
+    it('interfaces with Upstash REST pipeline when configured', async () => {
+      Object.defineProperty(process.env, 'NODE_ENV', { value: 'production', configurable: true });
+      process.env.UPSTASH_REDIS_REST_URL = 'https://fake-upstash-redis.upstash.io';
+      process.env.UPSTASH_REDIS_REST_TOKEN = 'fake_token';
+
+      const mockFetch = jest.spyOn(global, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ result: 1 }, { result: 1 }, { result: 60 }],
+      } as any);
+
+      const res = await checkRateLimitDistributed('dist_redis_client', { limit: 5 });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://fake-upstash-redis.upstash.io/pipeline',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer fake_token',
+          }),
+        })
+      );
+      expect(res.allowed).toBe(true);
+      expect(res.source).toBe('upstash');
+
+      mockFetch.mockRestore();
+    });
+
+    it('falls back gracefully to memory store if Upstash fetch fails', async () => {
+      Object.defineProperty(process.env, 'NODE_ENV', { value: 'production', configurable: true });
+      process.env.UPSTASH_REDIS_REST_URL = 'https://fake-upstash-redis.upstash.io';
+      process.env.UPSTASH_REDIS_REST_TOKEN = 'fake_token';
+
+      const mockFetch = jest.spyOn(global, 'fetch').mockRejectedValueOnce(new Error('Connection timeout'));
+
+      const res = await checkRateLimitDistributed('dist_fail_client', { limit: 5 });
+      expect(res.allowed).toBe(true);
+      expect(res.source).toBe('memory');
+
+      mockFetch.mockRestore();
     });
   });
 

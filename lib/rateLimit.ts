@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server';
 
-interface RateLimitOptions {
+export interface RateLimitOptions {
   limit?: number; // max requests allowed per window
   windowMs?: number; // window duration in milliseconds
 }
 
-interface RateLimitResult {
+export interface RateLimitResult {
   allowed: boolean;
   limit: number;
   remaining: number;
   resetMs: number;
+  source?: 'memory' | 'upstash' | 'test';
 }
 
 interface WindowRecord {
@@ -17,7 +18,7 @@ interface WindowRecord {
   lastCleanup: number;
 }
 
-// In-memory sliding window record store
+// In-memory sliding window fallback store
 const memoryStore = new Map<string, WindowRecord>();
 
 /**
@@ -28,7 +29,7 @@ export function clearRateLimitStore(): void {
 }
 
 /**
- * Extracts client IP safely from request headers.
+ * Extracts client IP safely from request headers across various edge/reverse proxy environments.
  */
 export function getClientIp(req: Request): string {
   const forwardedFor = req.headers.get('x-forwarded-for');
@@ -51,10 +52,7 @@ export function getClientIp(req: Request): string {
 }
 
 /**
- * Evaluates rate limit using a sliding-window algorithm.
- * 
- * Default limits: 20 requests per 60 seconds per identifier.
- * Highly permissive for legitimate users, but throttles automated brute-force attacks.
+ * In-memory sliding window check.
  */
 export function checkRateLimit(
   identifier: string,
@@ -93,6 +91,7 @@ export function checkRateLimit(
       limit,
       remaining: 0,
       resetMs,
+      source: 'memory',
     };
   }
 
@@ -105,7 +104,81 @@ export function checkRateLimit(
     limit,
     remaining,
     resetMs,
+    source: 'memory',
   };
+}
+
+/**
+ * Distributed rate limiter with Upstash Redis REST support.
+ * 
+ * If UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are configured,
+ * it synchronizes atomically across all serverless instances via HTTP REST.
+ * If unconfigured or in test mode, seamlessly falls back to the in-memory sliding window.
+ */
+export async function checkRateLimitDistributed(
+  identifier: string,
+  options: RateLimitOptions = {}
+): Promise<RateLimitResult> {
+  const upstashUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  // In test environment or when Upstash is not configured, use local memory sliding window
+  if (process.env.NODE_ENV === 'test' || !upstashUrl || !upstashToken) {
+    return checkRateLimit(identifier, options);
+  }
+
+  const limit = options.limit ?? 20;
+  const windowMs = options.windowMs ?? 60_000;
+  const windowSec = Math.max(1, Math.ceil(windowMs / 1000));
+  const redisKey = `ratelimit:${identifier}`;
+
+  try {
+    // Atomic INCR + EXPIRE via Upstash REST Pipeline
+    const response = await fetch(`${upstashUrl}/pipeline`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${upstashToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([
+        ['INCR', redisKey],
+        ['EXPIRE', redisKey, windowSec],
+        ['TTL', redisKey],
+      ]),
+      // 1.5s timeout to avoid blocking requests if Redis network latency spikes
+      signal: AbortSignal.timeout(1500),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      // data format: [ { result: 1 }, { result: 1 }, { result: 60 } ]
+      const count = Number(data[0]?.result ?? 1);
+      const ttlSec = Number(data[2]?.result ?? windowSec);
+      const resetMs = ttlSec > 0 ? ttlSec * 1000 : windowMs;
+
+      if (count > limit) {
+        return {
+          allowed: false,
+          limit,
+          remaining: 0,
+          resetMs,
+          source: 'upstash',
+        };
+      }
+
+      return {
+        allowed: true,
+        limit,
+        remaining: Math.max(0, limit - count),
+        resetMs,
+        source: 'upstash',
+      };
+    }
+  } catch {
+    // Fall back gracefully to memory store on network timeout or Redis error
+  }
+
+  return checkRateLimit(identifier, options);
 }
 
 /**

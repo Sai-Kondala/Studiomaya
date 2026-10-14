@@ -1,9 +1,9 @@
 /**
- * Studio Maya Structured Logger & Error Monitoring Bridge
+ * Studio Maya Structured Logger & Production Error Monitoring Bridge
  * 
  * Provides structured JSON logging in production and readable formatting in development,
  * with automatic redaction of sensitive credentials, tokens, and payment secrets.
- * Seamlessly hooks into Sentry if configured, without throwing or interrupting runtime execution.
+ * Delivers real exceptions directly to Sentry (via HTTP Store API or SDK) and webhook monitors.
  */
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -62,6 +62,90 @@ interface LogEntry {
     message: string;
     stack?: string;
   };
+}
+
+/**
+ * Parses Sentry DSN into endpoint components.
+ * Format: https://<publicKey>@<host>/<projectId>
+ */
+export function parseSentryDsn(dsn: string): { host: string; projectId: string; publicKey: string } | null {
+  try {
+    const parsed = new URL(dsn);
+    const publicKey = parsed.username;
+    const host = parsed.host;
+    const projectId = parsed.pathname.replace(/^\/+/, '');
+
+    if (!publicKey || !host || !projectId) {
+      return null;
+    }
+
+    return { host, projectId, publicKey };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Dispatches an exception to Sentry via HTTP Store API.
+ */
+export async function sendExceptionToSentry(
+  err: Error | unknown,
+  context?: Record<string, unknown>,
+  dsnOverride?: string
+): Promise<{ success: boolean; error?: string }> {
+  const dsn = dsnOverride || process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN;
+  if (!dsn) {
+    return { success: false, error: 'SENTRY_DSN is not configured.' };
+  }
+
+  const parsedDsn = parseSentryDsn(dsn);
+  if (!parsedDsn) {
+    return { success: false, error: 'Invalid SENTRY_DSN format.' };
+  }
+
+  const errorObj = err instanceof Error ? err : new Error(String(err));
+  const payload = {
+    event_id: Math.random().toString(36).substring(2) + Date.now().toString(36),
+    timestamp: new Date().toISOString(),
+    platform: 'javascript',
+    level: 'error',
+    logger: 'studiomaya.production',
+    environment: process.env.NODE_ENV || 'development',
+    exception: {
+      values: [
+        {
+          type: errorObj.name,
+          value: errorObj.message,
+          stacktrace: {
+            frames: (errorObj.stack || '')
+              .split('\n')
+              .slice(1)
+              .map((line) => ({ function: line.trim() })),
+          },
+        },
+      ],
+    },
+    extra: redactSensitiveData(context),
+  };
+
+  try {
+    const response = await fetch(`https://${parsedDsn.host}/api/${parsedDsn.projectId}/store/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sentry-Auth': `Sentry sentry_version=7, sentry_client=studiomaya-logger/1.0, sentry_key=${parsedDsn.publicKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(3000),
+    });
+
+    if (response.ok) {
+      return { success: true };
+    }
+    return { success: false, error: `Sentry returned HTTP status ${response.status}` };
+  } catch (netErr) {
+    return { success: false, error: String(netErr) };
+  }
 }
 
 class Logger {
@@ -149,11 +233,26 @@ class Logger {
 
   private forwardToMonitoring(err: unknown, context?: unknown) {
     try {
-      // Optional Sentry dynamic dispatch if Sentry is configured
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const globalAny = global as any;
-      if (globalAny.Sentry && typeof globalAny.Sentry.captureException === 'function') {
-        globalAny.Sentry.captureException(err, { extra: redactSensitiveData(context) });
+      const dsn = process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN;
+      if (dsn) {
+        // Asynchronously deliver to Sentry without blocking
+        sendExceptionToSentry(err, context as Record<string, unknown>).catch(() => {});
+      }
+
+      // Check for generic monitoring webhook (Discord, Slack, Axiom)
+      const webhookUrl = process.env.MONITORING_WEBHOOK_URL;
+      if (webhookUrl) {
+        fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            level: 'error',
+            message: err instanceof Error ? err.message : String(err),
+            context: redactSensitiveData(context),
+            timestamp: new Date().toISOString(),
+          }),
+          signal: AbortSignal.timeout(2000),
+        }).catch(() => {});
       }
     } catch {
       // Never throw from the logger

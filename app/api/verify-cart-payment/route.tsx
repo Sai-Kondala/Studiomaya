@@ -6,9 +6,20 @@ import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import { linkOrCreateCustomer } from '@/lib/customer';
 import { clearUserCart } from '@/lib/cartService';
 import { sendOrderReceiptEmail } from '@/lib/orderEmailDelivery';
+import { checkRateLimitDistributed, getClientIp, rateLimitResponse } from '@/lib/rateLimit';
+import { logger } from '@/lib/logger';
 
 export async function POST(req: Request) {
   try {
+    if (process.env.NODE_ENV !== 'test') {
+      const clientIp = getClientIp(req);
+      const rateLimit = await checkRateLimitDistributed(`verify_cart_payment_${clientIp}`, { limit: 30, windowMs: 60_000 });
+      if (!rateLimit.allowed) {
+        logger.warn('Rate limit exceeded on verify-cart-payment', { ip: clientIp });
+        return rateLimitResponse(rateLimit.resetMs);
+      }
+    }
+
     const body = await req.json();
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = body;
 
