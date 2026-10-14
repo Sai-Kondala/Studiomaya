@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
+import { logger } from '@/lib/logger';
 
 /**
  * Verifies Svix webhook signatures sent by Resend if RESEND_WEBHOOK_SECRET is set.
@@ -56,7 +57,7 @@ export async function POST(req: Request) {
     const webhookSecret = process.env.RESEND_WEBHOOK_SECRET;
 
     if (!webhookSecret && process.env.NODE_ENV === 'production') {
-      console.error('RESEND_WEBHOOK_SECRET is missing in production.');
+      logger.error('RESEND_WEBHOOK_SECRET is missing in production.');
       return NextResponse.json(
         { error: 'Webhook secret is not configured in production.' },
         { status: 500 }
@@ -64,7 +65,7 @@ export async function POST(req: Request) {
     }
 
     if (webhookSecret && !verifyResendWebhookSignature(rawBody, req.headers, webhookSecret)) {
-      console.error('Invalid Resend webhook signature.');
+      logger.error('Invalid Resend webhook signature.');
       return NextResponse.json({ error: 'Invalid webhook signature.' }, { status: 401 });
     }
 
@@ -92,8 +93,40 @@ export async function POST(req: Request) {
     }
 
     const supabaseAdmin = createSupabaseAdminClient();
-    let newStatus: string | null = null;
 
+    // 1. Persistent Event Deduplication check using Svix ID or Resend Event ID
+    const svixId = req.headers.get('svix-id') || event.id || (data.email_id ? `${data.email_id}_${type}` : null);
+    if (svixId) {
+      try {
+        const eventsTable = supabaseAdmin.from('processed_webhook_events');
+        if (typeof eventsTable?.insert === 'function') {
+          const { error: claimError } = await eventsTable.insert({
+            event_id: `resend_${svixId}`,
+            provider: 'resend',
+            event_type: type,
+            order_id: orderId,
+            status: 'completed',
+          });
+
+          if (claimError) {
+            if (
+              claimError.code === '23505' ||
+              claimError.message?.includes('duplicate key') ||
+              claimError.message?.includes('unique constraint')
+            ) {
+              return NextResponse.json(
+                { received: true, status: 'event_already_processed' },
+                { status: 200 }
+              );
+            }
+          }
+        }
+      } catch {
+        // Non-fatal if table pending migration
+      }
+    }
+
+    let newStatus: string | null = null;
     switch (type) {
       case 'email.delivered':
         newStatus = 'delivered';
@@ -113,13 +146,33 @@ export async function POST(req: Request) {
     }
 
     if (newStatus) {
+      // 2. Monotonic check: prevent out-of-order events from downgrading 'delivered'
+      try {
+        const ordersTable = supabaseAdmin.from('orders');
+        if (typeof ordersTable?.select === 'function') {
+          const { data: orderRecord } = await ordersTable
+            .select('email_delivery_status')
+            .eq('id', orderId)
+            .maybeSingle();
+
+          if (orderRecord?.email_delivery_status === 'delivered' && newStatus !== 'delivered') {
+            return NextResponse.json(
+              { received: true, status: 'ignored_terminal_state', message: 'Order email already delivered.' },
+              { status: 200 }
+            );
+          }
+        }
+      } catch {
+        // Continue if query not supported
+      }
+
       const { error: updateError } = await supabaseAdmin
         .from('orders')
         .update({ email_delivery_status: newStatus })
         .eq('id', orderId);
 
       if (updateError) {
-        console.error(
+        logger.error(
           `Failed to update order ${orderId} email_delivery_status to ${newStatus}:`,
           updateError
         );
@@ -132,8 +185,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ received: true, status: newStatus || 'ignored' }, { status: 200 });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Resend webhook processing error:', message);
+    logger.error('Resend webhook processing error', error);
     return NextResponse.json({ error: 'Internal server error.' }, { status: 500 });
   }
 }

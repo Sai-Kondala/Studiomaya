@@ -30,3 +30,13 @@ jobs:
 
       - name: Run Tests
         run: npm run test
+
+      - name: Build Application
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://mock-supabase.supabase.co' }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'mock-anon-key' }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || 'mock-service-role-key' }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID || 'mock-key-id' }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET || 'mock-key-secret' }}
+          EMAIL_PROVIDER_API_KEY: ${{ secrets.EMAIL_PROVIDER_API_KEY || 'mock-resend-key' }}

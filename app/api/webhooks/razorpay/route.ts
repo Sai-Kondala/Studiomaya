@@ -61,26 +61,71 @@ export async function POST(req: Request) {
     }
 
     const supabaseAdmin = createSupabaseAdminClient();
+    let eventClaimed = false;
 
-    // 2. Persistent Database Event ID Deduplication check
+    // 2. Persistent Atomic Database Event ID Claim
     if (eventId) {
       try {
-        const { data: existingLoggedEvent } = await supabaseAdmin
-          .from('processed_webhook_events')
-          .select('event_id')
-          .eq('event_id', eventId)
-          .maybeSingle();
+        const eventsTable = supabaseAdmin.from('processed_webhook_events');
+        if (typeof eventsTable?.insert === 'function') {
+          const { error: claimError } = await eventsTable.insert({
+            event_id: eventId,
+            provider: 'razorpay',
+            event_type: eventType,
+            status: 'processing',
+          });
 
-        if (existingLoggedEvent) {
-          recentWebhookEventIds.add(eventId);
-          logger.info('Duplicate webhook event detected via database event registry', { eventId });
-          return NextResponse.json(
-            { received: true, status: 'event_already_processed', event_id: eventId },
-            { status: 200 }
-          );
+          if (claimError) {
+            // Unique constraint violation (23505) confirms another concurrent execution already claimed this event
+            if (
+              claimError.code === '23505' ||
+              claimError.message?.includes('duplicate key') ||
+              claimError.message?.includes('unique constraint')
+            ) {
+              recentWebhookEventIds.add(eventId);
+              logger.info('Duplicate webhook event detected via atomic database claim constraint', { eventId });
+              return NextResponse.json(
+                { received: true, status: 'event_already_processed', event_id: eventId },
+                { status: 200 }
+              );
+            }
+
+            // Fallback check if existing logged event can be queried via select
+            if (typeof eventsTable?.select === 'function') {
+              const { data: existingLoggedEvent } = await eventsTable
+                .select('event_id')
+                .eq('event_id', eventId)
+                .maybeSingle();
+
+              if (existingLoggedEvent) {
+                recentWebhookEventIds.add(eventId);
+                logger.info('Duplicate webhook event detected via database select check', { eventId });
+                return NextResponse.json(
+                  { received: true, status: 'event_already_processed', event_id: eventId },
+                  { status: 200 }
+                );
+              }
+            }
+
+            // Table pending migration (42P01 / PGRST204) allows fallback; otherwise report retryable error
+            if (claimError.code !== '42P01' && claimError.code !== 'PGRST204') {
+              logger.error('Database error claiming webhook event ID', claimError);
+              return NextResponse.json(
+                { error: 'Webhook event store temporarily unavailable.' },
+                { status: 500 }
+              );
+            }
+          } else {
+            eventClaimed = true;
+            recentWebhookEventIds.add(eventId);
+          }
         }
-      } catch {
-        // Table may be pending migration; graceful fallback to order status idempotency
+      } catch (claimErr) {
+        logger.error('Exception during webhook event claiming', claimErr);
+        return NextResponse.json(
+          { error: 'Webhook event store temporarily unavailable.' },
+          { status: 500 }
+        );
       }
     }
 
@@ -361,7 +406,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // 11. Record event ID to persistent registry and in-memory set
+    // 11. Finalize claimed event ID to persistent registry and in-memory set
     if (eventId) {
       recentWebhookEventIds.add(eventId);
       if (recentWebhookEventIds.size > 2000) {
@@ -370,12 +415,23 @@ export async function POST(req: Request) {
       }
 
       try {
-        await supabaseAdmin.from('processed_webhook_events').insert({
-          event_id: eventId,
-          provider: 'razorpay',
-          event_type: eventType,
-          order_id: updatedOrder.id,
-        });
+        const eventsTable = supabaseAdmin.from('processed_webhook_events');
+        if (eventClaimed && typeof eventsTable?.update === 'function') {
+          await eventsTable
+            .update({
+              status: 'completed',
+              order_id: updatedOrder.id,
+            })
+            .eq('event_id', eventId);
+        } else if (typeof eventsTable?.insert === 'function') {
+          await eventsTable.insert({
+            event_id: eventId,
+            provider: 'razorpay',
+            event_type: eventType,
+            status: 'completed',
+            order_id: updatedOrder.id,
+          });
+        }
       } catch {
         // Table migration pending fallback
       }

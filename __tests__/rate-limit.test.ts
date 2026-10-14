@@ -19,6 +19,26 @@ describe('Rate Limiter', () => {
   });
 
   describe('getClientIp', () => {
+    it('prioritizes cf-connecting-ip from Cloudflare proxy', () => {
+      const req = new Request('http://localhost:3000/api/create-order', {
+        headers: {
+          'cf-connecting-ip': '198.51.100.99',
+          'x-forwarded-for': '203.0.113.195',
+        },
+      });
+      expect(getClientIp(req)).toBe('198.51.100.99');
+    });
+
+    it('prioritizes x-vercel-ip from Vercel edge', () => {
+      const req = new Request('http://localhost:3000/api/create-order', {
+        headers: {
+          'x-vercel-ip': '198.51.100.88',
+          'x-forwarded-for': '203.0.113.195',
+        },
+      });
+      expect(getClientIp(req)).toBe('198.51.100.88');
+    });
+
     it('extracts the first IP from x-forwarded-for header', () => {
       const req = new Request('http://localhost:3000/api/create-order', {
         headers: {

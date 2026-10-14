@@ -130,7 +130,7 @@ export async function GET(request: Request) {
     if (!product.pdf_url) {
       if (product.template_url) {
         if (!isValidTemplateRedirect(product.template_url)) {
-          console.error(`Blocked untrusted template redirect URL: ${product.template_url}`);
+          logger.error(`Blocked untrusted template redirect URL: ${product.template_url}`);
           return NextResponse.json({ error: 'Product template URL destination is untrusted or invalid.' }, { status: 400 });
         }
         return NextResponse.redirect(product.template_url);
@@ -139,21 +139,25 @@ export async function GET(request: Request) {
     }
 
     // 4. Generate secure, short-lived 15-minute signed URL from private bucket
-    const normalizedPath = product.pdf_url.replace(/^\/+/, '');
+    const normalizedPath = product.pdf_url.trim().replace(/^\/+/, '');
+    if (normalizedPath.includes('..') || normalizedPath.includes('\0')) {
+      logger.error('Invalid storage file path in product record', null, { productId, path: product.pdf_url });
+      return NextResponse.json({ error: 'Invalid product file configuration.' }, { status: 400 });
+    }
+
     const { data: signedData, error: signError } = await supabaseAdmin.storage
       .from('product-files')
       .createSignedUrl(normalizedPath, 60 * 15, { download: true });
 
     if (signError || !signedData?.signedUrl) {
-      console.error('Storage signed URL error:', signError?.message);
+      logger.error('Storage signed URL error', signError);
       return NextResponse.json({ error: 'Failed to generate secure download link.' }, { status: 500 });
     }
 
     // Redirect to signed download URL
     return NextResponse.redirect(signedData.signedUrl);
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Download route error:', message);
+    logger.error('Download route error', error);
     return NextResponse.json({ error: 'An error occurred while generating download link.' }, { status: 500 });
   }
 }

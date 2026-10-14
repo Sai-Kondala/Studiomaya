@@ -1,12 +1,23 @@
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import { generateThermalReceiptEmailHtml, EmailDownloadLink, EmailReceiptItem } from '@/lib/emailReceiptTemplate';
 import { Resend } from 'resend';
+import { logger } from '@/lib/logger';
 
 export async function createProductDownloadUrl(
   supabaseAdmin: ReturnType<typeof createSupabaseAdminClient>,
   pdfPath: string
 ): Promise<string | null> {
-  const normalizedPath = pdfPath.replace(/^\/+/, '');
+  if (!pdfPath || typeof pdfPath !== 'string') {
+    return null;
+  }
+
+  const normalizedPath = pdfPath.trim().replace(/^\/+/, '');
+
+  // Guard against path traversal and null bytes
+  if (normalizedPath.includes('..') || normalizedPath.includes('\0')) {
+    logger.error('Invalid or suspicious storage path for download URL', null, { pdfPath });
+    return null;
+  }
 
   // Generate 24-hour temporary signed download link for email delivery
   const { data, error } = await supabaseAdmin.storage
@@ -18,7 +29,7 @@ export async function createProductDownloadUrl(
     );
 
   if (error || !data?.signedUrl) {
-    console.error('Failed to create download link:', error?.message);
+    logger.error('Failed to create download link from storage', error);
     return null;
   }
 
@@ -162,7 +173,7 @@ export async function sendOrderReceiptEmail(
       const errorMsg =
         resendError?.message ||
         (typeof resendError === 'string' ? resendError : 'Resend API returned failure without delivery data');
-      console.error('Email delivery error reported by Resend API:', errorMsg);
+      logger.error('Email delivery error reported by Resend API', null, { error: errorMsg, orderId: order.id });
 
       try {
         await supabaseAdmin
@@ -189,7 +200,7 @@ export async function sendOrderReceiptEmail(
     return { success: true, message: 'Receipt email dispatched successfully.' };
   } catch (emailError: unknown) {
     const msg = emailError instanceof Error ? emailError.message : String(emailError);
-    console.error('Email delivery exception:', msg);
+    logger.error('Email delivery exception', emailError, { orderId: order.id });
 
     // Update status to failed
     try {

@@ -2,14 +2,14 @@ import { NextResponse } from 'next/server';
 import Razorpay from 'razorpay';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
-import { checkRateLimit, getClientIp, rateLimitResponse } from '@/lib/rateLimit';
+import { checkRateLimitDistributed, getClientIp, rateLimitResponse } from '@/lib/rateLimit';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: Request) {
   try {
     if (process.env.NODE_ENV !== 'test') {
       const clientIp = getClientIp(request);
-      const rateLimit = checkRateLimit(`cart_checkout_${clientIp}`, { limit: 30, windowMs: 60_000 });
+      const rateLimit = await checkRateLimitDistributed(`cart_checkout_${clientIp}`, { limit: 30, windowMs: 60_000 });
       if (!rateLimit.allowed) {
         logger.warn('Rate limit exceeded on cart-checkout', { ip: clientIp });
         return rateLimitResponse(rateLimit.resetMs);
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
       receipt: `cart_${Date.now()}`,
     });
 
-    // 4. Create ONE order record
+    // 4. Create order payload
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const orderPayload: any = {
       customer_name: customerName.trim(),
@@ -103,56 +103,93 @@ export async function POST(request: Request) {
       orderPayload.user_id = verifiedUserId;
     }
 
-    let { data: orderData, error: insertError } = await supabaseAdmin
-      .from('orders')
-      .insert(orderPayload)
-      .select('id')
-      .single();
+    const itemsPayload = publishedProducts.map((p) => ({
+      product_id: p.id,
+      unit_price: p.price,
+      product_name_snapshot: p.name,
+    }));
 
-    // Graceful fallback if user_id column is not yet present
-    const isColErr = (err: any) =>
-      err &&
-      (err.code === '42703' ||
-        err.code === 'PGRST204' ||
-        (typeof err.message === 'string' && (err.message.includes('user_id') || err.message.includes('schema cache'))));
+    let orderData: { id: string } | null = null;
+    let insertError: any = null;
 
-    if (insertError && isColErr(insertError) && orderPayload.user_id) {
-      delete orderPayload.user_id;
-      const retry = await supabaseAdmin
+    // 1. Attempt transactional atomic insert via database RPC
+    try {
+      if (typeof supabaseAdmin.rpc === 'function') {
+        const rpcResult = await supabaseAdmin.rpc('create_order_atomic', {
+          p_order: orderPayload,
+          p_items: itemsPayload,
+        });
+
+        if (!rpcResult.error && rpcResult.data) {
+          orderData = { id: rpcResult.data };
+        } else if (
+          rpcResult.error &&
+          rpcResult.error.code !== 'PGRST202' &&
+          rpcResult.error.code !== '42883'
+        ) {
+          insertError = rpcResult.error;
+        }
+      }
+    } catch {
+      // Fall through to fallback insert below
+    }
+
+    // 2. Fallback to direct insert if RPC not present in environment
+    if (!orderData && !insertError) {
+      let { data: directData, error: directError } = await supabaseAdmin
         .from('orders')
         .insert(orderPayload)
         .select('id')
         .single();
-      orderData = retry.data;
-      insertError = retry.error;
-    }
 
-    if (insertError || !orderData) {
-      console.error('Supabase cart order insert error:', JSON.stringify(insertError));
+      // Graceful fallback if user_id column is not yet present
+      const isColErr = (err: any) =>
+        err &&
+        (err.code === '42703' ||
+          err.code === 'PGRST204' ||
+          (typeof err.message === 'string' && (err.message.includes('user_id') || err.message.includes('schema cache'))));
+
+      if (directError && isColErr(directError) && orderPayload.user_id) {
+        delete orderPayload.user_id;
+        const retry = await supabaseAdmin
+          .from('orders')
+          .insert(orderPayload)
+          .select('id')
+          .single();
+        directData = retry.data;
+        directError = retry.error;
+      }
+
+      if (directError || !directData) {
+        logger.error('Supabase cart order insert error', directError);
+        return NextResponse.json({ error: 'Failed to save cart order.' }, { status: 500 });
+      }
+
+      orderData = directData;
+
+      const orderItems = publishedProducts.map((p) => ({
+        order_id: orderData!.id,
+        product_id: p.id,
+        unit_price: p.price,
+        product_name_snapshot: p.name,
+      }));
+
+      const { error: itemsError } = await supabaseAdmin.from('order_items').insert(orderItems);
+
+      if (itemsError) {
+        logger.error('Supabase order_items insert error', itemsError);
+        // Compensate by deleting incomplete pending order
+        await supabaseAdmin.from('orders').delete().eq('id', orderData.id);
+        return NextResponse.json({ error: 'Failed to save cart order items.' }, { status: 500 });
+      }
+    } else if (insertError) {
+      logger.error('Atomic cart order creation failed via RPC', insertError);
       return NextResponse.json({ error: 'Failed to save cart order.' }, { status: 500 });
-    }
-
-    // 5. Create order_items
-    const orderItems = publishedProducts.map(p => ({
-      order_id: orderData.id,
-      product_id: p.id,
-      unit_price: p.price,
-      product_name_snapshot: p.name
-    }));
-
-    const { error: itemsError } = await supabaseAdmin.from('order_items').insert(orderItems);
-
-    if (itemsError) {
-      console.error('Supabase order_items insert error:', JSON.stringify(itemsError));
-      // Compensate by deleting incomplete pending order
-      await supabaseAdmin.from('orders').delete().eq('id', orderData.id);
-      return NextResponse.json({ error: 'Failed to save cart order items.' }, { status: 500 });
     }
 
     return NextResponse.json({ orderId: order.id, amount: Math.round(totalAmount * 100), keyId });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Cart checkout error:', message);
+    logger.error('Cart checkout error', error);
     return NextResponse.json({ error: 'Failed to process checkout.' }, { status: 500 });
   }
 }

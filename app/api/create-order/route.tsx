@@ -2,14 +2,14 @@ import { NextResponse } from 'next/server';
 import Razorpay from 'razorpay';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
-import { checkRateLimit, getClientIp, rateLimitResponse } from '@/lib/rateLimit';
+import { checkRateLimitDistributed, getClientIp, rateLimitResponse } from '@/lib/rateLimit';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: Request) {
   try {
     if (process.env.NODE_ENV !== 'test') {
       const clientIp = getClientIp(request);
-      const rateLimit = checkRateLimit(`create_order_${clientIp}`, { limit: 30, windowMs: 60_000 });
+      const rateLimit = await checkRateLimitDistributed(`create_order_${clientIp}`, { limit: 30, windowMs: 60_000 });
       if (!rateLimit.allowed) {
         logger.warn('Rate limit exceeded on create-order', { ip: clientIp });
         return rateLimitResponse(rateLimit.resetMs);
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
       !process.env.NEXT_PUBLIC_SUPABASE_URL ||
       !process.env.SUPABASE_SERVICE_ROLE_KEY
     ) {
-      console.error('Order creation is not configured: Supabase server credentials are missing.');
+      logger.error('Order creation is not configured: Supabase server credentials are missing.');
       return NextResponse.json(
         { error: 'Order storage is not configured on the server.' },
         { status: 503 }
@@ -108,59 +108,102 @@ export async function POST(request: Request) {
       orderPayload.user_id = verifiedUserId;
     }
 
-    let { data: orderData, error: insertError } = await supabaseAdmin
-      .from('orders')
-      .insert(orderPayload)
-      .select('id')
-      .single();
+    const itemsPayload = [
+      {
+        product_id: productId,
+        unit_price: serverPrice,
+        product_name_snapshot: product.name,
+      },
+    ];
 
-    // Gracefully handle case where user_id column has not been added yet in staging/test env
-    const isColErr = (err: any) =>
-      err &&
-      (err.code === '42703' ||
-        err.code === 'PGRST204' ||
-        (typeof err.message === 'string' && (err.message.includes('user_id') || err.message.includes('schema cache'))));
+    let orderData: { id: string } | null = null;
+    let insertError: any = null;
 
-    if (insertError && isColErr(insertError) && orderPayload.user_id) {
-      delete orderPayload.user_id;
-      const retry = await supabaseAdmin
+    // 1. Attempt transactional atomic insert via database RPC
+    try {
+      if (typeof supabaseAdmin.rpc === 'function') {
+        const rpcResult = await supabaseAdmin.rpc('create_order_atomic', {
+          p_order: orderPayload,
+          p_items: itemsPayload,
+        });
+
+        if (!rpcResult.error && rpcResult.data) {
+          orderData = { id: rpcResult.data };
+        } else if (
+          rpcResult.error &&
+          rpcResult.error.code !== 'PGRST202' &&
+          rpcResult.error.code !== '42883'
+        ) {
+          insertError = rpcResult.error;
+        }
+      }
+    } catch {
+      // Fall through to fallback insert below
+    }
+
+    // 2. Fallback to direct insert if RPC not present in environment
+    if (!orderData && !insertError) {
+      let { data: directData, error: directError } = await supabaseAdmin
         .from('orders')
         .insert(orderPayload)
         .select('id')
         .single();
-      orderData = retry.data;
-      insertError = retry.error;
-    }
 
-    if (insertError || !orderData) {
-      console.error('Supabase order insert error:', JSON.stringify(insertError));
+      // Gracefully handle case where user_id column has not been added yet in staging/test env
+      const isColErr = (err: any) =>
+        err &&
+        (err.code === '42703' ||
+          err.code === 'PGRST204' ||
+          (typeof err.message === 'string' && (err.message.includes('user_id') || err.message.includes('schema cache'))));
+
+      if (directError && isColErr(directError) && orderPayload.user_id) {
+        delete orderPayload.user_id;
+        const retry = await supabaseAdmin
+          .from('orders')
+          .insert(orderPayload)
+          .select('id')
+          .single();
+        directData = retry.data;
+        directError = retry.error;
+      }
+
+      if (directError || !directData) {
+        logger.error('Supabase order insert error', directError);
+        return NextResponse.json(
+          { error: 'The payment order could not be saved. Check the orders table columns and server database credentials.' },
+          { status: 500 }
+        );
+      }
+
+      orderData = directData;
+
+      const { error: itemError } = await supabaseAdmin.from('order_items').insert({
+        order_id: orderData.id,
+        product_id: productId,
+        unit_price: serverPrice,
+        product_name_snapshot: product.name,
+      });
+
+      if (itemError) {
+        logger.error('Supabase order_item insert error', itemError);
+        // Compensating rollback: delete incomplete pending order
+        await supabaseAdmin.from('orders').delete().eq('id', orderData.id);
+        return NextResponse.json(
+          { error: 'The payment order items could not be saved.' },
+          { status: 500 }
+        );
+      }
+    } else if (insertError) {
+      logger.error('Atomic order creation failed via RPC', insertError);
       return NextResponse.json(
         { error: 'The payment order could not be saved. Check the orders table columns and server database credentials.' },
         { status: 500 }
       );
     }
 
-    const { error: itemError } = await supabaseAdmin.from('order_items').insert({
-      order_id: orderData.id,
-      product_id: productId,
-      unit_price: serverPrice,
-      product_name_snapshot: product.name
-    });
-
-    if (itemError) {
-      console.error('Supabase order_item insert error:', JSON.stringify(itemError));
-      // Compensating rollback: delete incomplete pending order
-      await supabaseAdmin.from('orders').delete().eq('id', orderData.id);
-      return NextResponse.json(
-        { error: 'The payment order items could not be saved.' },
-        { status: 500 }
-      );
-    }
-
     return NextResponse.json({ orderId: order.id });
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('Create order error:', errorMessage);
+    logger.error('Create order error', error);
     return NextResponse.json(
       { error: 'Failed to create the payment order. Check the server logs and required environment variables.' },
       { status: 500 }

@@ -209,4 +209,78 @@ describe('POST /api/webhooks/resend', () => {
     expect(res.status).toBe(500);
     expect(data.error).toBe('Failed to update order email delivery status in database.');
   });
+
+  it('prevents monotonic regression if order email is already delivered', async () => {
+    let updateCalled = false;
+
+    mockSupabase.from.mockImplementation((table: string) => {
+      if (table === 'orders') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: { email_delivery_status: 'delivered' } }),
+            }),
+          }),
+          update: () => {
+            updateCalled = true;
+            return { eq: () => Promise.resolve({ error: null }) };
+          },
+        };
+      }
+      return {};
+    });
+
+    const event = {
+      type: 'email.delivery_delayed',
+      created_at: new Date().toISOString(),
+      data: {
+        email_id: 'resend_delayed_after_delivered',
+        tags: [{ name: 'order_id', value: 'order_already_delivered' }],
+      },
+    };
+
+    const res = await POST(createWebhookRequest(event));
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.status).toBe('ignored_terminal_state');
+    expect(updateCalled).toBe(false);
+  });
+
+  it('deduplicates duplicate Resend webhook events using svix-id', async () => {
+    mockSupabase.from.mockImplementation((table: string) => {
+      if (table === 'processed_webhook_events') {
+        return {
+          insert: () => Promise.resolve({
+            error: { code: '23505', message: 'duplicate key value violates unique constraint' },
+          }),
+        };
+      }
+      return {};
+    });
+
+    const event = {
+      type: 'email.delivered',
+      created_at: new Date().toISOString(),
+      data: {
+        email_id: 'resend_duplicate',
+        tags: [{ name: 'order_id', value: 'order_dup_123' }],
+      },
+    };
+
+    const req = new Request('http://localhost/api/webhooks/resend', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'svix-id': 'msg_duplicate_svix_123',
+      },
+      body: JSON.stringify(event),
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.status).toBe('event_already_processed');
+  });
 });

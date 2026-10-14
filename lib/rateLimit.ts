@@ -30,22 +30,32 @@ export function clearRateLimitStore(): void {
 
 /**
  * Extracts client IP safely from request headers across various edge/reverse proxy environments.
+ * Prioritizes trusted edge headers (Cloudflare, Vercel, Real-IP) before fallback to X-Forwarded-For.
  */
 export function getClientIp(req: Request): string {
-  const forwardedFor = req.headers.get('x-forwarded-for');
-  if (forwardedFor) {
-    const firstIp = forwardedFor.split(',')[0].trim();
-    if (firstIp) return firstIp;
+  // 1. Cloudflare verified client IP (overwritten and validated at Cloudflare edge)
+  const cfConnectingIp = req.headers.get('cf-connecting-ip');
+  if (cfConnectingIp && cfConnectingIp.trim()) {
+    return cfConnectingIp.trim();
   }
 
+  // 2. Vercel edge client IP
+  const vercelIp = req.headers.get('x-vercel-ip');
+  if (vercelIp && vercelIp.trim()) {
+    return vercelIp.trim();
+  }
+
+  // 3. Direct reverse proxy client IP
   const realIp = req.headers.get('x-real-ip');
   if (realIp && realIp.trim()) {
     return realIp.trim();
   }
 
-  const cfConnectingIp = req.headers.get('cf-connecting-ip');
-  if (cfConnectingIp && cfConnectingIp.trim()) {
-    return cfConnectingIp.trim();
+  // 4. Standard X-Forwarded-For: extract first valid IP
+  const forwardedFor = req.headers.get('x-forwarded-for');
+  if (forwardedFor) {
+    const firstIp = forwardedFor.split(',')[0].trim();
+    if (firstIp) return firstIp;
   }
 
   return '127.0.0.1';
@@ -63,6 +73,15 @@ export function checkRateLimit(
   const now = Date.now();
   const windowStart = now - windowMs;
 
+  // Periodic memory store cleanup: prune expired records
+  if (memoryStore.size > 1000) {
+    for (const [key, item] of memoryStore.entries()) {
+      if (item.timestamps.length === 0 || now - item.lastCleanup > windowMs) {
+        memoryStore.delete(key);
+      }
+    }
+  }
+
   let record = memoryStore.get(identifier);
   if (!record) {
     record = { timestamps: [], lastCleanup: now };
@@ -72,15 +91,6 @@ export function checkRateLimit(
   // Filter out timestamps outside the active sliding window
   record.timestamps = record.timestamps.filter((ts) => ts > windowStart);
   record.lastCleanup = now;
-
-  // Periodic memory store cleanup if store grows large
-  if (memoryStore.size > 2000) {
-    for (const [key, item] of memoryStore.entries()) {
-      if (item.timestamps.length === 0 || now - item.lastCleanup > windowMs * 2) {
-        memoryStore.delete(key);
-      }
-    }
-  }
 
   const currentCount = record.timestamps.length;
   if (currentCount >= limit) {

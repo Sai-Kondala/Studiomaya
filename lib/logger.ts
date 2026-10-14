@@ -20,6 +20,7 @@ const SENSITIVE_KEYS = new Set([
   'credit_card',
   'cvv',
   'token_hash',
+  'card_number',
 ]);
 
 /**
