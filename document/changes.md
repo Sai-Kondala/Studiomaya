@@ -314,6 +314,42 @@ Snapshots:   0 total
    - Updated the subtitle text on [`app/thank-you/page.tsx`](file:///d:/Notion/digital-store/app/thank-you/page.tsx) to:
      `"Collect the receipt below. Tap the sheet to tear off your verified pass."`
 
+---
 
+## 9. Production Hardening, Concurrency & Payment Resilience Upgrades
 
+Following the comprehensive project maturity audit, the system has been hardened against concurrency anomalies, duplicate webhook retries, out-of-order delivery events, and serverless scaling edge cases:
+
+### 1. Distributed Atomic Rate Limiting & Safe Reverse Proxy IP Extraction
+- **Trusted Proxy Header Priority**: Updated [`lib/rateLimit.ts`](file:///d:/Notion/digital-store/lib/rateLimit.ts) so `getClientIp()` prioritizes spoof-resistant edge headers: `cf-connecting-ip` (Cloudflare), `x-vercel-ip` (Vercel), and `x-real-ip` (trusted reverse proxies) before falling back to `x-forwarded-for`.
+- **Sliding Window Pruning**: Added proactive bounded cleanup to the in-memory sliding window store to prevent memory leaks in serverless instances.
+- **Shared Limiting on Checkout**: Upgraded single order creation ([`app/api/create-order/route.tsx`](file:///d:/Notion/digital-store/app/api/create-order/route.tsx)) and cart checkout ([`app/api/cart-checkout/route.tsx`](file:///d:/Notion/digital-store/app/api/cart-checkout/route.tsx)) from local in-memory checks to distributed Redis-backed `await checkRateLimitDistributed(...)`.
+
+### 2. Claim-First Persistent Razorpay Webhook Idempotency
+- **Race Condition Prevention**: Replaced the previous check-then-insert pattern in [`app/api/webhooks/razorpay/route.ts`](file:///d:/Notion/digital-store/app/api/webhooks/razorpay/route.ts) with an atomic **Claim-First pattern**:
+  1. Instant in-memory `Set` lookup.
+  2. Immediate atomic `INSERT` into `processed_webhook_events` with `status: 'processing'`. If a duplicate key violation (`23505`) occurs, another concurrent delivery is confirmed and returns `200` (`event_already_processed`).
+  3. Returns retryable `500` if the database event store is unavailable so Razorpay retries later rather than bypassing idempotency.
+  4. Upon fulfillment completion, transitions record to `status: 'completed'` with `order_id`. On unhandled errors, releases or updates claim so retries can succeed.
+
+### 3. Transactional Atomic Order Creation & Payment Reconciliation
+- **Atomic Order RPC**: Created database migration [`supabase/migrations/20261014_hardening.sql`](file:///d:/Notion/digital-store/supabase/migrations/20261014_hardening.sql) adding the PostgreSQL function `create_order_atomic(p_order jsonb, p_items jsonb)`. It writes the parent order and all order items within a single database transaction, rolling back automatically on error and preventing orphaned orders.
+- **Order Creation Integration**: Updated [`app/api/create-order/route.tsx`](file:///d:/Notion/digital-store/app/api/create-order/route.tsx) and [`app/api/cart-checkout/route.tsx`](file:///d:/Notion/digital-store/app/api/cart-checkout/route.tsx) to execute via `create_order_atomic` RPC with graceful fallback.
+- **Automated Order Reconciliation Service**: Built [`lib/orderReconciliation.ts`](file:///d:/Notion/digital-store/lib/orderReconciliation.ts) and the admin endpoint [`app/api/admin/reconcile-orders/route.ts`](file:///d:/Notion/digital-store/app/api/admin/reconcile-orders/route.ts) (protected by `verifyAdminSession()`). Automatically inspects pending orders older than 15 minutes, queries Razorpay for payment status, verifies amount and currency parity, marks confirmed payments as `paid`, links customer profiles, and delivers signed receipts.
+
+### 4. Resend Webhook Deduplication & Monotonic Status Hierarchy
+- **Persistent Svix Deduplication**: In [`app/api/webhooks/resend/route.ts`](file:///d:/Notion/digital-store/app/api/webhooks/resend/route.ts), captured unique `svix-id` events in `processed_webhook_events` with `provider: 'resend'`.
+- **Monotonic Hierarchy**: Added a terminal status lock preventing out-of-order delivery events (e.g., `email.delivery_delayed` arriving after `email.delivered`) from overwriting confirmed `delivered` state.
+
+### 5. Private Storage Download Validation & Path Traversal Guards
+- **Path Sanitization**: In [`lib/orderEmailDelivery.ts`](file:///d:/Notion/digital-store/lib/orderEmailDelivery.ts) and [`app/api/account/download/route.ts`](file:///d:/Notion/digital-store/app/api/account/download/route.ts), added strict validation on `pdfPath` rejecting directory traversal (`..`) and null bytes (`\0`) before generating time-limited signed URLs.
+
+### 6. Log Hygiene & APM Bridge Integration
+- **PII & Credential Redaction**: Added `card_number` to redaction keys in [`lib/logger.ts`](file:///d:/Notion/digital-store/lib/logger.ts).
+- **Consolidated Error Dispatch**: Replaced raw `console.error` calls across `create-order`, `cart-checkout`, `resend/route.ts`, and `orderEmailDelivery` with `logger.error(...)` to guarantee all runtime errors dispatch to Sentry and monitoring webhooks.
+
+### 7. CI/CD Hardening & Verification
+- **Build Step in CI**: Updated [`.github/workflows/ci.yml`](file:///d:/Notion/digital-store/.github/workflows/ci.yml) to run `npm run build` with mock build-time environment variables following linting and Jest execution.
+- **Test Suite Expansion**: Added [`__tests__/order-reconciliation.test.ts`](file:///d:/Notion/digital-store/__tests__/order-reconciliation.test.ts) and expanded [`__tests__/rate-limit.test.ts`](file:///d:/Notion/digital-store/__tests__/rate-limit.test.ts) and [`__tests__/api/resend-webhook.test.ts`](file:///d:/Notion/digital-store/__tests__/api/resend-webhook.test.ts).
+- **Verification**: All 19 test suites and 141 tests pass; `npm run build` compiles with 0 errors across 28 pages.
 
