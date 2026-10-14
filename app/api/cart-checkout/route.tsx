@@ -2,14 +2,26 @@ import { NextResponse } from 'next/server';
 import Razorpay from 'razorpay';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
+import { checkRateLimit, getClientIp, rateLimitResponse } from '@/lib/rateLimit';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: Request) {
   try {
+    if (process.env.NODE_ENV !== 'test') {
+      const clientIp = getClientIp(request);
+      const rateLimit = checkRateLimit(`cart_checkout_${clientIp}`, { limit: 30, windowMs: 60_000 });
+      if (!rateLimit.allowed) {
+        logger.warn('Rate limit exceeded on cart-checkout', { ip: clientIp });
+        return rateLimitResponse(rateLimit.resetMs);
+      }
+    }
+
     const { productIds, customerName, customerEmail, customerPhone } = await request.json();
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
     if (!keyId || !keySecret) {
+      logger.error('Payment configuration missing for cart-checkout');
       return NextResponse.json({ error: 'Payment is not configured on the server.' }, { status: 503 });
     }
 

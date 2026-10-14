@@ -2,16 +2,27 @@ import { NextResponse } from 'next/server';
 import Razorpay from 'razorpay';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
+import { checkRateLimit, getClientIp, rateLimitResponse } from '@/lib/rateLimit';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: Request) {
   try {
+    if (process.env.NODE_ENV !== 'test') {
+      const clientIp = getClientIp(request);
+      const rateLimit = checkRateLimit(`create_order_${clientIp}`, { limit: 30, windowMs: 60_000 });
+      if (!rateLimit.allowed) {
+        logger.warn('Rate limit exceeded on create-order', { ip: clientIp });
+        return rateLimitResponse(rateLimit.resetMs);
+      }
+    }
+
     const body = await request.json();
     const { customerName, customerEmail, customerPhone, productId } = body;
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
     if (!keyId || !keySecret) {
-      console.error('Order creation is not configured: Razorpay credentials are missing.');
+      logger.error('Order creation is not configured: Razorpay credentials are missing.');
       return NextResponse.json(
         { error: 'Payment is not configured on the server.' },
         { status: 503 }

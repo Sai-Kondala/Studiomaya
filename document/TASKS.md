@@ -104,8 +104,12 @@ flowchart TD
 
 ## 3. Active & Upcoming Deliverables
 
-### Phase 5: Future Enhancements
-- [ ] **Customer Portal (Optional)**: Magic-link login allowing buyers to access lifetime purchased digital libraries.
+### Phase 5: Future Enhancements & Hardening
+- [x] **Customer Portal**: Account login, purchase history, and protected digital downloads (`/account`, `/account/orders`).
+- [x] **Razorpay Webhook Backup**: Webhook listener (`/api/webhooks/razorpay`) to fulfill orders and send download emails asynchronously if the user closes their browser early.
+- [x] **Sliding-Window Rate Limiting**: Abuse prevention for checkout and authentication endpoints (`lib/rateLimit.ts`).
+- [x] **Structured Observability & Redaction**: Production logger and APM bridge with automatic sensitive data redaction (`lib/logger.ts`).
+- [x] **Disaster Recovery & Runbook**: Documented RPO/RTO targets, database backups, key rotation, and payment reconciliation playbooks (`document/DISASTER_RECOVERY.md`).
 - [ ] **Discount Codes & Coupons**: Promotional discounts calculated server-side during checkout.
 - [ ] **Automated PDF Stamping**: Dynamically stamp buyer's email onto purchased PDF guides to discourage unauthorized redistribution.
-- [ ] **Webhook Backup**: Add Razorpay webhook listener to fulfill orders if user closes browser before client-side verification completes.
+
