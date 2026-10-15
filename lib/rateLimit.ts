@@ -22,6 +22,7 @@ interface WindowRecord {
 
 // In-memory sliding window fallback store
 const memoryStore = new Map<string, WindowRecord>();
+const MAX_MEMORY_KEYS = 5000;
 
 /**
  * Resets the in-memory rate limit store (primarily for unit testing).
@@ -32,19 +33,21 @@ export function clearRateLimitStore(): void {
 
 /**
  * Extracts client IP safely from request headers across various edge/reverse proxy environments.
- * Prioritizes trusted edge headers (Cloudflare, Vercel, Real-IP) before fallback to X-Forwarded-For.
+ * Prioritizes Vercel verified edge headers when hosted on Vercel.
  */
 export function getClientIp(req: Request): string {
-  // 1. Cloudflare verified client IP (overwritten and validated at Cloudflare edge)
-  const cfConnectingIp = req.headers.get('cf-connecting-ip');
-  if (cfConnectingIp && cfConnectingIp.trim()) {
-    return cfConnectingIp.trim();
+  // 1. Prioritize Vercel verified edge headers when hosted on Vercel
+  const vercelForwarded = req.headers.get('x-vercel-forwarded-for') || req.headers.get('x-vercel-ip');
+  if (vercelForwarded && vercelForwarded.trim()) {
+    return vercelForwarded.split(',')[0].trim();
   }
 
-  // 2. Vercel edge client IP
-  const vercelIp = req.headers.get('x-vercel-ip');
-  if (vercelIp && vercelIp.trim()) {
-    return vercelIp.trim();
+  // 2. Trust cf-connecting-ip ONLY when explicitly behind Cloudflare proxy
+  if (process.env.TRUST_CLOUDFLARE_PROXY === 'true') {
+    const cfConnectingIp = req.headers.get('cf-connecting-ip');
+    if (cfConnectingIp && cfConnectingIp.trim()) {
+      return cfConnectingIp.trim();
+    }
   }
 
   // 3. Direct reverse proxy client IP
@@ -81,6 +84,10 @@ export function checkRateLimit(
       if (item.timestamps.length === 0 || now - item.lastCleanup > windowMs) {
         memoryStore.delete(key);
       }
+    }
+    if (memoryStore.size >= MAX_MEMORY_KEYS) {
+      const oldestKey = memoryStore.keys().next().value;
+      if (oldestKey) memoryStore.delete(oldestKey);
     }
   }
 
@@ -159,7 +166,7 @@ export async function checkRateLimitDistributed(
       },
       body: JSON.stringify([
         ['INCR', redisKey],
-        ['EXPIRE', redisKey, windowSec],
+        ['EXPIRE', redisKey, windowSec, 'NX'],
         ['TTL', redisKey],
       ]),
       // 1.5s timeout to avoid blocking requests if Redis network latency spikes

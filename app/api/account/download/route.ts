@@ -127,7 +127,15 @@ export async function GET(request: Request) {
       .maybeSingle();
 
     if (itemError || !orderItem) {
-      return NextResponse.json({ error: 'Product not found in this order.' }, { status: 404 });
+      logger.warn('Unauthorized product download attempt across mismatched orderId/productId', {
+        orderId,
+        productId,
+        userId: user?.id ?? 'guest',
+      });
+      return NextResponse.json(
+        { error: 'This product was not purchased in the specified order.' },
+        { status: 403 }
+      );
     }
 
     // 3. Fetch product details

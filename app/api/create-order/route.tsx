@@ -29,13 +29,18 @@ export async function POST(request: Request) {
       );
     }
 
+    const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
     if (
       typeof customerName !== 'string' ||
-      !customerName.trim() ||
+      customerName.trim().length < 1 ||
+      customerName.trim().length > 120 ||
       typeof customerEmail !== 'string' ||
-      !customerEmail.trim() ||
+      customerEmail.trim().length > 254 ||
+      !EMAIL_REGEX.test(customerEmail.trim()) ||
       typeof productId !== 'string' ||
-      !productId
+      !productId.trim() ||
+      productId.trim().length > 64
     ) {
       return NextResponse.json(
         { error: 'Product and customer details are required.' },

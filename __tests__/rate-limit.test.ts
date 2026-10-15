@@ -19,7 +19,8 @@ describe('Rate Limiter', () => {
   });
 
   describe('getClientIp', () => {
-    it('prioritizes cf-connecting-ip from Cloudflare proxy', () => {
+    it('prioritizes cf-connecting-ip from Cloudflare proxy when TRUST_CLOUDFLARE_PROXY is enabled', () => {
+      process.env.TRUST_CLOUDFLARE_PROXY = 'true';
       const req = new Request('http://localhost:3000/api/create-order', {
         headers: {
           'cf-connecting-ip': '198.51.100.99',
@@ -27,6 +28,16 @@ describe('Rate Limiter', () => {
         },
       });
       expect(getClientIp(req)).toBe('198.51.100.99');
+    });
+
+    it('prioritizes Vercel edge headers over unverified cf-connecting-ip header', () => {
+      const req = new Request('http://localhost:3000/api/create-order', {
+        headers: {
+          'cf-connecting-ip': '198.51.100.99',
+          'x-vercel-forwarded-for': '203.0.113.88',
+        },
+      });
+      expect(getClientIp(req)).toBe('203.0.113.88');
     });
 
     it('prioritizes x-vercel-ip from Vercel edge', () => {

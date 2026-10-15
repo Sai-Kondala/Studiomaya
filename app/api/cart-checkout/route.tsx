@@ -41,8 +41,17 @@ export async function POST(request: Request) {
     }
 
     // Validate customer inputs
-    if (!customerEmail || typeof customerEmail !== 'string' || !customerEmail.trim() ||
-        !customerName || typeof customerName !== 'string' || !customerName.trim()) {
+    const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (
+      !customerEmail ||
+      typeof customerEmail !== 'string' ||
+      customerEmail.trim().length > 254 ||
+      !EMAIL_REGEX.test(customerEmail.trim()) ||
+      !customerName ||
+      typeof customerName !== 'string' ||
+      customerName.trim().length < 1 ||
+      customerName.trim().length > 120
+    ) {
       return NextResponse.json({ error: 'Customer details are required.' }, { status: 400 });
     }
 
