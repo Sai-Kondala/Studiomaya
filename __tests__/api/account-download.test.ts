@@ -1,6 +1,7 @@
 import { GET } from '@/app/api/account/download/route';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
+import { generateGuestDownloadToken } from '@/lib/downloadAuth';
 
 jest.mock('@/lib/supabaseServer', () => ({
   getAuthenticatedUser: jest.fn(),
@@ -31,10 +32,11 @@ describe('GET /api/account/download', () => {
     (createSupabaseAdminClient as jest.Mock).mockReturnValue(mockSupabaseAdmin);
   });
 
-  const createRequest = (params: { orderId?: string; productId?: string }) => {
+  const createRequest = (params: { orderId?: string; productId?: string; token?: string }) => {
     const url = new URL('http://localhost/api/account/download');
     if (params.orderId) url.searchParams.set('orderId', params.orderId);
     if (params.productId) url.searchParams.set('productId', params.productId);
+    if (params.token) url.searchParams.set('token', params.token);
     return new Request(url.toString(), { method: 'GET' });
   };
 
@@ -406,5 +408,159 @@ describe('GET /api/account/download', () => {
 
     expect(res.status).toBe(403);
     expect(data.error).toContain('do not have permission');
+  });
+
+  describe('Guest download cryptographic token authorization', () => {
+    const guestOrder = {
+      id: 'order_guest_123',
+      status: 'paid',
+      customer_email: 'guest@example.com',
+      user_id: null,
+    };
+
+    beforeEach(() => {
+      (getAuthenticatedUser as jest.Mock).mockResolvedValue(null);
+    });
+
+    it('allows unauthenticated guest to download with a valid cryptographic token', async () => {
+      mockSupabaseAdmin.from.mockImplementation((table: string) => {
+        if (table === 'orders') {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: () => Promise.resolve({ data: guestOrder, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'order_items') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: { id: 'item_1' }, error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'products') {
+          return {
+            select: () => ({
+              eq: () => ({
+                single: () =>
+                  Promise.resolve({
+                    data: { id: 'prod_1', name: 'Product 1', pdf_url: 'file.pdf' },
+                    error: null,
+                  }),
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const validToken = generateGuestDownloadToken('order_guest_123', 'prod_1', 'guest@example.com');
+      const req = createRequest({
+        orderId: 'order_guest_123',
+        productId: 'prod_1',
+        token: validToken,
+      });
+
+      const res = await GET(req);
+      expect([302, 307]).toContain(res.status);
+      expect(res.headers.get('location')).toBe('https://storage.supabase.co/signed/product.pdf');
+    });
+
+    it('rejects unauthenticated guest download with an invalid or forged token', async () => {
+      mockSupabaseAdmin.from.mockImplementation((table: string) => {
+        if (table === 'orders') {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: () => Promise.resolve({ data: guestOrder, error: null }),
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const forgedToken = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      const req = createRequest({
+        orderId: 'order_guest_123',
+        productId: 'prod_1',
+        token: forgedToken,
+      });
+
+      const res = await GET(req);
+      const data = await res.json();
+      expect(res.status).toBe(403);
+      expect(data.error).toContain('You do not have permission to access this order');
+    });
+
+    it('rejects guest token when attempting to access an account-owned order', async () => {
+      mockSupabaseAdmin.from.mockImplementation((table: string) => {
+        if (table === 'orders') {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: () =>
+                  Promise.resolve({
+                    data: {
+                      id: 'order_acc_999',
+                      status: 'paid',
+                      customer_email: 'customer@example.com',
+                      user_id: 'user_registered_abc', // order is owned by an account
+                    },
+                    error: null,
+                  }),
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const token = generateGuestDownloadToken('order_acc_999', 'prod_1', 'customer@example.com');
+      const req = createRequest({
+        orderId: 'order_acc_999',
+        productId: 'prod_1',
+        token,
+      });
+
+      const res = await GET(req);
+      const data = await res.json();
+      expect(res.status).toBe(401);
+      expect(data.error).toContain('Please sign in to access purchases linked to your account');
+    });
+
+    it('rejects guest token if requesting a different product than token authorized', async () => {
+      mockSupabaseAdmin.from.mockImplementation((table: string) => {
+        if (table === 'orders') {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: () => Promise.resolve({ data: guestOrder, error: null }),
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      // Token generated for prod_1, but request attempts to download prod_2
+      const token = generateGuestDownloadToken('order_guest_123', 'prod_1', 'guest@example.com');
+      const req = createRequest({
+        orderId: 'order_guest_123',
+        productId: 'prod_2',
+        token,
+      });
+
+      const res = await GET(req);
+      const data = await res.json();
+      expect(res.status).toBe(403);
+      expect(data.error).toContain('You do not have permission to access this order');
+    });
   });
 });

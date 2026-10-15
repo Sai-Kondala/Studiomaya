@@ -110,6 +110,8 @@ describe('Order Reconciliation Engine', () => {
       items: [
         {
           id: 'pay_rzp_captured_99',
+          order_id: 'order_rzp_stuck',
+          currency: 'INR',
           status: 'captured',
           amount: 49900,
         },
@@ -126,6 +128,57 @@ describe('Order Reconciliation Engine', () => {
     expect(paidUpdate.status).toBe('paid');
     expect(paidUpdate.razorpay_payment_id).toBe('pay_rzp_captured_99');
     expect(sendOrderReceiptEmail).toHaveBeenCalledWith('ord_stuck_1', mockSupabase);
+  });
+
+  it('rejects reconciliation if payment currency is not INR', async () => {
+    const pendingOrder = {
+      id: 'ord_stuck_currency',
+      amount: 499,
+      status: 'pending',
+      razorpay_order_id: 'order_rzp_usd',
+      customer_email: 'buyer@example.com',
+      created_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+    };
+
+    mockSupabase = {
+      from: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            lt: jest.fn().mockReturnValue({
+              order: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue({
+                  data: [pendingOrder],
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        }),
+        update: jest.fn(),
+      }),
+    };
+
+    (createSupabaseAdminClient as jest.Mock).mockReturnValue(mockSupabase);
+
+    mockRazorpayOrdersFetch.mockResolvedValue({ id: 'order_rzp_usd', status: 'paid' });
+    mockRazorpayOrdersFetchPayments.mockResolvedValue({
+      items: [
+        {
+          id: 'pay_rzp_usd_1',
+          order_id: 'order_rzp_usd',
+          currency: 'USD',
+          status: 'captured',
+          amount: 49900,
+        },
+      ],
+    });
+
+    const report = await reconcilePendingOrders({ maxAgeMinutes: 15 });
+
+    expect(report.checked).toBe(1);
+    expect(report.reconciled).toBe(0);
+    expect(report.errors).toHaveLength(1);
+    expect(report.errors[0].error).toContain('Currency mismatch');
   });
 
   it('rejects reconciliation if captured payment amount does not match order amount', async () => {
@@ -172,6 +225,8 @@ describe('Order Reconciliation Engine', () => {
       items: [
         {
           id: 'pay_rzp_short',
+          order_id: 'order_rzp_mismatch',
+          currency: 'INR',
           status: 'captured',
           amount: 10000, // ₹100 instead of ₹499
         },
@@ -235,6 +290,59 @@ describe('Order Reconciliation Engine', () => {
       expect(res.status).toBe(200);
       expect(data.success).toBe(true);
       expect(data.report).toBeDefined();
+    });
+
+    it('allows cron job with valid Authorization: Bearer CRON_SECRET without admin session', async () => {
+      process.env.CRON_SECRET = 'super_secret_cron_token_123';
+      (verifyAdminSession as jest.Mock).mockRejectedValue(new Error('No admin session'));
+
+      mockSupabase = {
+        from: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              lt: jest.fn().mockReturnValue({
+                order: jest.fn().mockReturnValue({
+                  limit: jest.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      };
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue(mockSupabase);
+
+      const req = new Request('http://localhost:3000/api/admin/reconcile-orders', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer super_secret_cron_token_123',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ limit: 150, maxAgeMinutes: 3 }), // should be clamped
+      });
+
+      const res = await reconcileRoute(req);
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.success).toBe(true);
+    });
+
+    it('rejects invalid Authorization: Bearer token when admin session is absent', async () => {
+      process.env.CRON_SECRET = 'super_secret_cron_token_123';
+      (verifyAdminSession as jest.Mock).mockRejectedValue(new Error('Unauthorized: Admin privileges required.'));
+
+      const req = new Request('http://localhost:3000/api/admin/reconcile-orders', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer wrong_token_forgery',
+        },
+      });
+
+      const res = await reconcileRoute(req);
+      const data = await res.json();
+
+      expect(res.status).toBe(401);
+      expect(data.error).toContain('Unauthorized');
     });
   });
 });

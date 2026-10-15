@@ -327,10 +327,9 @@ export async function mergeAnonymousCartIntoUser(userId: string, localProductIds
     throw new Error(`Failed to verify products for cart merge: ${prodError.message}`);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const validPublishedIds = (publishedProducts || [])
-    .filter((p: any) => p.status === 'Published')
-    .map((p: any) => p.id);
+  const validPublishedIds = ((publishedProducts as Array<{ id: string; status: string }> | null) || [])
+    .filter((p) => p.status === 'Published')
+    .map((p) => p.id);
 
   if (validPublishedIds.length === 0) {
     return getUserCartItems(userId);

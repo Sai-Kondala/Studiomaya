@@ -20,7 +20,7 @@ export default async function AccountOverviewPage() {
   let { data: rawOrders, error: ordersError } = await supabaseAdmin
     .from('orders')
     .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id, user_id, customer_email')
-    .or(`user_id.eq.${user.id},and(user_id.is.null,customer_email.ilike.${normalizedEmail})`)
+    .or(`user_id.eq.${user.id},and(user_id.is.null,customer_email.eq."${normalizedEmail}")`)
     .order('created_at', { ascending: false });
 
   // Fallback for environments where user_id column is pending
@@ -28,7 +28,7 @@ export default async function AccountOverviewPage() {
     const fallback = await supabaseAdmin
       .from('orders')
       .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id, customer_email')
-      .ilike('customer_email', normalizedEmail)
+      .eq('customer_email', normalizedEmail)
       .order('created_at', { ascending: false });
     rawOrders = fallback.data as any;
     ordersError = fallback.error;

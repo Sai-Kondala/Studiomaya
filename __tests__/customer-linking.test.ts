@@ -16,6 +16,7 @@ describe('Customer & Guest Orders Linking (lib/customer.ts)', () => {
     it('links unassigned guest orders (user_id IS NULL) to verified customer', async () => {
       const updateFilterSpy: any = {
         is: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
         ilike: jest.fn().mockReturnThis(),
         select: jest.fn().mockResolvedValue({
           data: [{ id: 'order_guest_1' }, { id: 'order_guest_2' }],
@@ -54,12 +55,13 @@ describe('Customer & Guest Orders Linking (lib/customer.ts)', () => {
         customer_id: 'cust_abc',
       });
       expect(updateFilterSpy.is).toHaveBeenCalledWith('user_id', null);
-      expect(updateFilterSpy.ilike).toHaveBeenCalledWith('customer_email', 'customer@example.com');
+      expect(updateFilterSpy.eq).toHaveBeenCalledWith('customer_email', 'customer@example.com');
     });
 
     it('strictly restricts linking to orders where user_id IS NULL (never reassigns existing user orders)', async () => {
       const updateFilterSpy: any = {
         is: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
         ilike: jest.fn().mockReturnThis(),
         select: jest.fn().mockResolvedValue({
           data: [],
@@ -103,6 +105,7 @@ describe('Customer & Guest Orders Linking (lib/customer.ts)', () => {
       // The function operates solely on verified email matching, not customer name
       const updateFilterSpy: any = {
         is: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
         ilike: jest.fn().mockReturnThis(),
         select: jest.fn().mockResolvedValue({
           data: [{ id: 'order_different_name' }],
@@ -130,7 +133,7 @@ describe('Customer & Guest Orders Linking (lib/customer.ts)', () => {
       const count = await linkGuestOrdersForUser('user_123', 'guest.buyer@domain.com');
       expect(count).toBe(1);
       // Query filter is by normalized email only, not customer_name
-      expect(updateFilterSpy.ilike).toHaveBeenCalledWith('customer_email', 'guest.buyer@domain.com');
+      expect(updateFilterSpy.eq).toHaveBeenCalledWith('customer_email', 'guest.buyer@domain.com');
     });
   });
 

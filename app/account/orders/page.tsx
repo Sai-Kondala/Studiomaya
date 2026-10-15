@@ -26,7 +26,7 @@ export default async function CustomerOrdersPage({ searchParams }: PageProps) {
 
   const supabaseAdmin = createSupabaseAdminClient();
   const normalizedEmail = user.email.trim().toLowerCase();
-  const ownershipFilter = `user_id.eq.${user.id},and(user_id.is.null,customer_email.ilike.${normalizedEmail})`;
+  const ownershipFilter = `user_id.eq.${user.id},and(user_id.is.null,customer_email.eq."${normalizedEmail}")`;
 
   // 1. Fetch total count of customer's orders strictly matching ownership
   // (owned by user_id OR unclaimed guest matching normalized email)
@@ -40,7 +40,7 @@ export default async function CustomerOrdersPage({ searchParams }: PageProps) {
     const fallbackCount = await supabaseAdmin
       .from('orders')
       .select('id', { count: 'exact', head: true })
-      .ilike('customer_email', normalizedEmail);
+      .eq('customer_email', normalizedEmail);
     count = fallbackCount.count;
     countError = fallbackCount.error;
   }
@@ -62,7 +62,7 @@ export default async function CustomerOrdersPage({ searchParams }: PageProps) {
     const fallbackOrders = await supabaseAdmin
       .from('orders')
       .select('id, amount, status, created_at, razorpay_order_id, razorpay_payment_id, customer_email')
-      .ilike('customer_email', normalizedEmail)
+      .eq('customer_email', normalizedEmail)
       .order('created_at', { ascending: false })
       .range(offset, offset + PAGE_SIZE - 1);
     rawOrders = fallbackOrders.data as typeof rawOrders;

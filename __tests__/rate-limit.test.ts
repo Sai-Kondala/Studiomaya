@@ -154,7 +154,21 @@ describe('Rate Limiter', () => {
 
       const res = await checkRateLimitDistributed('dist_fail_client', { limit: 5 });
       expect(res.allowed).toBe(true);
-      expect(res.source).toBe('memory');
+      expect(res.source).toBe('memory_degraded');
+
+      mockFetch.mockRestore();
+    });
+
+    it('blocks request with failClosed when Upstash fetch fails', async () => {
+      Object.defineProperty(process.env, 'NODE_ENV', { value: 'production', configurable: true });
+      process.env.UPSTASH_REDIS_REST_URL = 'https://fake-upstash-redis.upstash.io';
+      process.env.UPSTASH_REDIS_REST_TOKEN = 'fake_token';
+
+      const mockFetch = jest.spyOn(global, 'fetch').mockRejectedValueOnce(new Error('Redis connection refused'));
+
+      const res = await checkRateLimitDistributed('dist_fail_client_closed', { limit: 5, failClosed: true });
+      expect(res.allowed).toBe(false);
+      expect(res.source).toBe('upstash_error_fail_closed');
 
       mockFetch.mockRestore();
     });

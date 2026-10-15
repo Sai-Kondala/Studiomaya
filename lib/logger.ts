@@ -21,6 +21,10 @@ const SENSITIVE_KEYS = new Set([
   'cvv',
   'token_hash',
   'card_number',
+  'signature',
+  'x-razorpay-signature',
+  'svix-signature',
+  'cron_secret',
 ]);
 
 /**

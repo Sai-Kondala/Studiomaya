@@ -8,7 +8,7 @@ export function verifyRazorpayWebhookSignature(
   receivedSignature: string | null,
   secret?: string
 ): boolean {
-  if (!secret) return true; // Allowed in dev / test when secret is not configured
+  if (!secret) return false;
   if (!receivedSignature || !/^[a-f\d]{64}$/i.test(receivedSignature)) {
     return false;
   }

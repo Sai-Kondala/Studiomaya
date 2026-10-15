@@ -153,7 +153,7 @@ export async function linkGuestOrdersForUser(userId: string, email: string): Pro
       .from('orders')
       .update(updatePayload)
       .is('user_id', null)
-      .ilike('customer_email', normalizedEmail)
+      .eq('customer_email', normalizedEmail)
       .select('id');
 
     if (error) {

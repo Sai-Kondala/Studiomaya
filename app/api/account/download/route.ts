@@ -36,6 +36,8 @@ function isValidTemplateRedirect(urlStr: string): boolean {
   }
 }
 
+import { verifyGuestDownloadToken } from '@/lib/downloadAuth';
+
 export async function GET(request: Request) {
   try {
     if (process.env.NODE_ENV !== 'test') {
@@ -48,21 +50,23 @@ export async function GET(request: Request) {
     }
 
     const user = await getAuthenticatedUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Please sign in to download your files.' }, { status: 401 });
-    }
-
     const { searchParams } = new URL(request.url);
     const orderId = searchParams.get('orderId');
     const productId = searchParams.get('productId');
+    const token = searchParams.get('token');
 
     if (!orderId || !productId) {
       return NextResponse.json({ error: 'Order ID and Product ID are required.' }, { status: 400 });
     }
 
+    // Require authenticated session or valid guest download access token
+    if (!user && !token) {
+      return NextResponse.json({ error: 'Please sign in to download your files.' }, { status: 401 });
+    }
+
     const supabaseAdmin = createSupabaseAdminClient();
 
-    // 1. Verify that this order exists, is paid, and belongs to this authenticated user
+    // 1. Verify that this order exists, is paid, and belongs to this customer
     let { data: order, error: orderError } = await supabaseAdmin
       .from('orders')
       .select('id, status, customer_email, user_id')
@@ -83,21 +87,31 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Order not found.' }, { status: 404 });
     }
 
-    // Ownership check: If order has an assigned user_id, that user_id MUST match user.id.
-    // If order has no assigned user_id (guest order), verified account email must match order customer_email.
-    const userEmail = user.email?.trim().toLowerCase();
-    const orderEmail = order.customer_email?.trim().toLowerCase();
     const orderUserId = (order as any).user_id;
+    const orderEmail = order.customer_email?.trim().toLowerCase();
 
-    let isOwner = false;
+    // Strict ownership verification:
+    // Case A: Account purchase (user_id is set). Requires authenticated session matching that exact user.
     if (orderUserId) {
-      isOwner = orderUserId === user.id;
-    } else if (userEmail && orderEmail) {
-      isOwner = orderEmail === userEmail;
-    }
+      if (!user) {
+        return NextResponse.json({ error: 'Please sign in to access purchases linked to your account.' }, { status: 401 });
+      }
+      if (orderUserId !== user.id) {
+        return NextResponse.json({ error: 'You do not have permission to access this order.' }, { status: 403 });
+      }
+    } else {
+      // Case B: Unassigned guest purchase (user_id is null).
+      // Permitted if signed into verified account with matching email, OR possessing a valid cryptographic guest token.
+      let isAuthorizedGuest = false;
+      if (user?.email && orderEmail && user.email.trim().toLowerCase() === orderEmail) {
+        isAuthorizedGuest = true;
+      } else if (token && orderEmail && verifyGuestDownloadToken(token, order.id, productId, orderEmail)) {
+        isAuthorizedGuest = true;
+      }
 
-    if (!isOwner) {
-      return NextResponse.json({ error: 'You do not have permission to access this order.' }, { status: 403 });
+      if (!isAuthorizedGuest) {
+        return NextResponse.json({ error: 'You do not have permission to access this order.' }, { status: 403 });
+      }
     }
 
     if (order.status !== 'paid') {

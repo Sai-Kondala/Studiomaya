@@ -595,5 +595,110 @@ describe('Razorpay Webhook Handler', () => {
       expect(data.status).toBe('fulfilled');
       expect(sendOrderReceiptEmail).toHaveBeenCalledWith('ord_uuid_event', expect.anything());
     });
+
+    it('safely allows retries when a previously failed webhook event is redelivered', async () => {
+      const retryEventId = 'event_retry_failed_123';
+      const payload = JSON.stringify({
+        id: retryEventId,
+        event: 'payment.captured',
+        payload: {
+          payment: {
+            entity: {
+              id: 'pay_capture_retry',
+              order_id: 'order_retry_1',
+              amount: 19900,
+              currency: 'INR',
+              status: 'captured',
+            },
+          },
+        },
+      });
+
+      const existingPendingOrder = {
+        id: 'ord_uuid_retry',
+        status: 'pending',
+        amount: 199,
+        customer_email: 'retry@studiomaya.com',
+        customer_name: 'Retry Buyer',
+        user_id: 'user_retry',
+      };
+
+      const updatedOrder = {
+        id: 'ord_uuid_retry',
+        amount: 199,
+        customer_email: 'retry@studiomaya.com',
+        customer_name: 'Retry Buyer',
+        user_id: 'user_retry',
+      };
+
+      const createEqChain = () => {
+        const chain: any = {
+          eq: jest.fn().mockImplementation(() => chain),
+        };
+        chain.then = (resolve: any) => Promise.resolve({ data: null, error: null }).then(resolve);
+        return chain;
+      };
+
+      const mockEventUpdate = jest.fn().mockImplementation(() => createEqChain());
+
+      const mockFrom = jest.fn((table: string) => {
+        if (table === 'processed_webhook_events') {
+          return {
+            insert: jest.fn().mockResolvedValue({
+              error: { code: '23505', message: 'duplicate key value violates unique constraint' },
+            }),
+            select: jest.fn().mockReturnValue({
+              eq: jest.fn().mockReturnValue({
+                maybeSingle: jest.fn().mockResolvedValue({
+                  data: { status: 'failed', processed_at: new Date().toISOString() },
+                  error: null,
+                }),
+              }),
+            }),
+            update: mockEventUpdate,
+          };
+        }
+        if (table === 'orders') {
+          return {
+            select: jest.fn().mockReturnValue({
+              eq: jest.fn().mockReturnValue({
+                single: jest.fn().mockResolvedValue({ data: existingPendingOrder, error: null }),
+              }),
+            }),
+            update: jest.fn().mockReturnValue({
+              eq: jest.fn().mockReturnValue({
+                neq: jest.fn().mockReturnValue({
+                  select: jest.fn().mockReturnValue({
+                    maybeSingle: jest.fn().mockResolvedValue({ data: updatedOrder, error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      (createSupabaseAdminClient as jest.Mock).mockReturnValue({
+        from: mockFrom,
+      });
+      (linkOrCreateCustomer as jest.Mock).mockResolvedValue({ id: 'cust_retry', user_id: 'user_retry' });
+      (clearUserCart as jest.Mock).mockResolvedValue(true);
+      (sendOrderReceiptEmail as jest.Mock).mockResolvedValue({ success: true });
+
+      const req = new Request('http://localhost:3000/api/webhooks/razorpay', {
+        method: 'POST',
+        headers: createSignedHeaders(payload),
+        body: payload,
+      });
+
+      const res = await POST(req);
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.status).toBe('fulfilled');
+      expect(mockEventUpdate).toHaveBeenCalled();
+      expect(sendOrderReceiptEmail).toHaveBeenCalledWith('ord_uuid_retry', expect.anything());
+    });
   });
 });

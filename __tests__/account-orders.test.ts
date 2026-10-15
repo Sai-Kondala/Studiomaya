@@ -88,7 +88,7 @@ describe('CustomerOrdersPage Ownership & Pagination', () => {
     await CustomerOrdersPage({ searchParams: Promise.resolve({ page: '1' }) });
 
     const expectedOwnershipFilter =
-      'user_id.eq.user_123,and(user_id.is.null,customer_email.ilike.buyer@example.com)';
+      'user_id.eq.user_123,and(user_id.is.null,customer_email.eq."buyer@example.com")';
 
     // Verify count query strictly applies ownership filter
     expect(countQuerySpy.or).toHaveBeenCalledWith(expectedOwnershipFilter);

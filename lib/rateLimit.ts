@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 
 export interface RateLimitOptions {
   limit?: number; // max requests allowed per window
   windowMs?: number; // window duration in milliseconds
+  failClosed?: boolean; // if true, rejects requests when Redis encounters network/server failures
 }
 
 export interface RateLimitResult {
@@ -10,7 +12,7 @@ export interface RateLimitResult {
   limit: number;
   remaining: number;
   resetMs: number;
-  source?: 'memory' | 'upstash' | 'test';
+  source?: 'memory' | 'upstash' | 'test' | 'memory_degraded' | 'upstash_error_fail_closed';
 }
 
 interface WindowRecord {
@@ -134,6 +136,11 @@ export async function checkRateLimitDistributed(
 
   // In test environment or when Upstash is not configured, use local memory sliding window
   if (process.env.NODE_ENV === 'test' || !upstashUrl || !upstashToken) {
+    if (process.env.NODE_ENV === 'production' && (!upstashUrl || !upstashToken)) {
+      logger.warn('Distributed rate limiter unconfigured in production; degraded to per-instance memory store', {
+        identifier,
+      });
+    }
     return checkRateLimit(identifier, options);
   }
 
@@ -183,12 +190,41 @@ export async function checkRateLimitDistributed(
         resetMs,
         source: 'upstash',
       };
+    } else {
+      logger.error('Upstash Redis pipeline returned non-OK status', null, {
+        status: response.status,
+        identifier,
+      });
+
+      if (options.failClosed) {
+        return {
+          allowed: false,
+          limit,
+          remaining: 0,
+          resetMs: windowMs,
+          source: 'upstash_error_fail_closed',
+        };
+      }
     }
-  } catch {
-    // Fall back gracefully to memory store on network timeout or Redis error
+  } catch (err) {
+    logger.error('Distributed rate limiter error; degraded to in-memory fallback', err, {
+      identifier,
+    });
+
+    if (options.failClosed) {
+      return {
+        allowed: false,
+        limit,
+        remaining: 0,
+        resetMs: windowMs,
+        source: 'upstash_error_fail_closed',
+      };
+    }
   }
 
-  return checkRateLimit(identifier, options);
+  // Fall back gracefully to memory store on network timeout or Redis error
+  const fallback = checkRateLimit(identifier, options);
+  return { ...fallback, source: 'memory_degraded' };
 }
 
 /**

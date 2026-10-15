@@ -11,7 +11,7 @@ function verifyResendWebhookSignature(
   headers: Headers,
   secret?: string
 ): boolean {
-  if (!secret) return true; // If no secret configured, allow in dev/staging
+  if (!secret) return false;
 
   const svixId = headers.get('svix-id');
   const svixTimestamp = headers.get('svix-timestamp');
@@ -52,6 +52,11 @@ function verifyResendWebhookSignature(
 }
 
 export async function POST(req: Request) {
+  let eventId: string | null = null;
+  let eventClaimed = false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let supabaseAdmin: any = null;
+
   try {
     const rawBody = await req.text();
     const webhookSecret = process.env.RESEND_WEBHOOK_SECRET;
@@ -92,20 +97,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true, ignored: 'No order_id tag found.' }, { status: 200 });
     }
 
-    const supabaseAdmin = createSupabaseAdminClient();
+    supabaseAdmin = createSupabaseAdminClient();
 
-    // 1. Persistent Event Deduplication check using Svix ID or Resend Event ID
+    // 1. Persistent Event Deduplication check using Svix ID or Resend Event ID with safe retry lifecycle
     const svixId = req.headers.get('svix-id') || event.id || (data.email_id ? `${data.email_id}_${type}` : null);
-    if (svixId) {
+    eventId = svixId ? `resend_${svixId}` : null;
+
+    if (eventId) {
       try {
         const eventsTable = supabaseAdmin.from('processed_webhook_events');
         if (typeof eventsTable?.insert === 'function') {
           const { error: claimError } = await eventsTable.insert({
-            event_id: `resend_${svixId}`,
+            event_id: eventId,
             provider: 'resend',
             event_type: type,
             order_id: orderId,
-            status: 'completed',
+            status: 'processing',
           });
 
           if (claimError) {
@@ -114,11 +121,66 @@ export async function POST(req: Request) {
               claimError.message?.includes('duplicate key') ||
               claimError.message?.includes('unique constraint')
             ) {
-              return NextResponse.json(
-                { received: true, status: 'event_already_processed' },
-                { status: 200 }
-              );
+              if (typeof eventsTable?.select === 'function') {
+                const { data: existingRecord } = await eventsTable
+                  .select('status, processed_at')
+                  .eq('event_id', eventId)
+                  .maybeSingle();
+
+                if (existingRecord?.status === 'completed') {
+                  return NextResponse.json(
+                    { received: true, status: 'event_already_processed' },
+                    { status: 200 }
+                  );
+                }
+
+                if (existingRecord?.status === 'failed') {
+                  const { error: reclaimError } = await eventsTable
+                    .update({
+                      status: 'processing',
+                      processed_at: new Date().toISOString(),
+                      error_message: null,
+                    })
+                    .eq('event_id', eventId)
+                    .eq('status', 'failed');
+
+                  if (!reclaimError) {
+                    eventClaimed = true;
+                  }
+                } else if (existingRecord?.status === 'processing') {
+                  const isStale =
+                    existingRecord.processed_at &&
+                    Date.now() - new Date(existingRecord.processed_at).getTime() > 3 * 60 * 1000;
+
+                  if (isStale) {
+                    await eventsTable
+                      .update({
+                        status: 'processing',
+                        processed_at: new Date().toISOString(),
+                      })
+                      .eq('event_id', eventId);
+                    eventClaimed = true;
+                  } else {
+                    return NextResponse.json(
+                      { received: true, status: 'event_already_processed' },
+                      { status: 200 }
+                    );
+                  }
+                } else {
+                  return NextResponse.json(
+                    { received: true, status: 'event_already_processed' },
+                    { status: 200 }
+                  );
+                }
+              } else {
+                return NextResponse.json(
+                  { received: true, status: 'event_already_processed' },
+                  { status: 200 }
+                );
+              }
             }
+          } else {
+            eventClaimed = true;
           }
         }
       } catch {
@@ -156,6 +218,14 @@ export async function POST(req: Request) {
             .maybeSingle();
 
           if (orderRecord?.email_delivery_status === 'delivered' && newStatus !== 'delivered') {
+            if (eventId && eventClaimed) {
+              try {
+                await supabaseAdmin
+                  .from('processed_webhook_events')
+                  .update({ status: 'completed' })
+                  .eq('event_id', eventId);
+              } catch {}
+            }
             return NextResponse.json(
               { received: true, status: 'ignored_terminal_state', message: 'Order email already delivered.' },
               { status: 200 }
@@ -176,11 +246,28 @@ export async function POST(req: Request) {
           `Failed to update order ${orderId} email_delivery_status to ${newStatus}:`,
           updateError
         );
+        if (eventId && eventClaimed) {
+          try {
+            await supabaseAdmin
+              .from('processed_webhook_events')
+              .update({ status: 'failed', error_message: updateError.message || 'Database update failed' })
+              .eq('event_id', eventId);
+          } catch {}
+        }
         return NextResponse.json(
           { error: 'Failed to update order email delivery status in database.' },
           { status: 500 }
         );
       }
+    }
+
+    if (eventId && eventClaimed) {
+      try {
+        await supabaseAdmin
+          .from('processed_webhook_events')
+          .update({ status: 'completed' })
+          .eq('event_id', eventId);
+      } catch {}
     }
 
     return NextResponse.json({ received: true, status: newStatus || 'ignored' }, { status: 200 });

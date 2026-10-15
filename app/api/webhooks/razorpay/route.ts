@@ -10,6 +10,24 @@ import { logger } from '@/lib/logger';
 const recentWebhookEventIds = new Set<string>();
 
 export async function POST(req: Request) {
+  let eventId: string | null = null;
+  let eventClaimed = false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let supabaseAdmin: any = null;
+
+  const failEvent = async (msg: string) => {
+    if (eventId && eventClaimed && supabaseAdmin) {
+      try {
+        await supabaseAdmin
+          .from('processed_webhook_events')
+          .update({ status: 'failed', error_message: msg })
+          .eq('event_id', eventId);
+      } catch {
+        // Table fallback
+      }
+    }
+  };
+
   try {
     const rawBody = await req.text();
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
@@ -41,7 +59,7 @@ export async function POST(req: Request) {
     }
 
     const eventType = event.event;
-    const eventId: string | null =
+    eventId =
       (typeof event.id === 'string' && event.id.trim()) ||
       req.headers.get('x-razorpay-event-id') ||
       null;
@@ -60,10 +78,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true, ignored: `Event '${eventType}' not monitored.` }, { status: 200 });
     }
 
-    const supabaseAdmin = createSupabaseAdminClient();
-    let eventClaimed = false;
+    supabaseAdmin = createSupabaseAdminClient();
 
-    // 2. Persistent Atomic Database Event ID Claim
+    // 2. Persistent Atomic Database Event ID Claim with Safe Retry Support
     if (eventId) {
       try {
         const eventsTable = supabaseAdmin.from('processed_webhook_events');
@@ -76,39 +93,84 @@ export async function POST(req: Request) {
           });
 
           if (claimError) {
-            // Unique constraint violation (23505) confirms another concurrent execution already claimed this event
+            // Unique constraint violation (23505): Event ID already exists in registry
             if (
               claimError.code === '23505' ||
               claimError.message?.includes('duplicate key') ||
               claimError.message?.includes('unique constraint')
             ) {
-              recentWebhookEventIds.add(eventId);
-              logger.info('Duplicate webhook event detected via atomic database claim constraint', { eventId });
-              return NextResponse.json(
-                { received: true, status: 'event_already_processed', event_id: eventId },
-                { status: 200 }
-              );
-            }
+              // Inspect status of existing event record
+              if (typeof eventsTable?.select === 'function') {
+                const { data: existingRecord } = await eventsTable
+                  .select('status, processed_at')
+                  .eq('event_id', eventId)
+                  .maybeSingle();
 
-            // Fallback check if existing logged event can be queried via select
-            if (typeof eventsTable?.select === 'function') {
-              const { data: existingLoggedEvent } = await eventsTable
-                .select('event_id')
-                .eq('event_id', eventId)
-                .maybeSingle();
+                // Case A: Event already successfully fulfilled
+                if (existingRecord?.status === 'completed') {
+                  recentWebhookEventIds.add(eventId);
+                  logger.info('Duplicate webhook event detected (already completed)', { eventId });
+                  return NextResponse.json(
+                    { received: true, status: 'event_already_processed', event_id: eventId },
+                    { status: 200 }
+                  );
+                }
 
-              if (existingLoggedEvent) {
+                // Case B: Previous attempt failed. Allow retry by reclaiming event.
+                if (existingRecord?.status === 'failed') {
+                  const { error: reclaimError } = await eventsTable
+                    .update({
+                      status: 'processing',
+                      processed_at: new Date().toISOString(),
+                      error_message: null,
+                    })
+                    .eq('event_id', eventId)
+                    .eq('status', 'failed');
+
+                  if (!reclaimError) {
+                    eventClaimed = true;
+                    logger.info('Reclaimed previously failed webhook event for retry', { eventId });
+                  }
+                } else if (existingRecord?.status === 'processing') {
+                  // Case C: Currently in-flight. Check if claim is stale (> 3 minutes old)
+                  const isStale =
+                    existingRecord.processed_at &&
+                    Date.now() - new Date(existingRecord.processed_at).getTime() > 3 * 60 * 1000;
+
+                  if (isStale) {
+                    await eventsTable
+                      .update({
+                        status: 'processing',
+                        processed_at: new Date().toISOString(),
+                      })
+                      .eq('event_id', eventId);
+                    eventClaimed = true;
+                    logger.warn('Reclaimed stale in-flight webhook claim', { eventId });
+                  } else {
+                    logger.info('Concurrent webhook event delivery currently processing', { eventId });
+                    return NextResponse.json(
+                      { received: true, status: 'event_already_processed', event_id: eventId },
+                      { status: 200 }
+                    );
+                  }
+                } else {
+                  // Unknown status or unrecorded; return 200 to prevent storm
+                  recentWebhookEventIds.add(eventId);
+                  return NextResponse.json(
+                    { received: true, status: 'event_already_processed', event_id: eventId },
+                    { status: 200 }
+                  );
+                }
+              } else {
+                // Table doesn't support select in mock; treat as already processed
                 recentWebhookEventIds.add(eventId);
-                logger.info('Duplicate webhook event detected via database select check', { eventId });
                 return NextResponse.json(
                   { received: true, status: 'event_already_processed', event_id: eventId },
                   { status: 200 }
                 );
               }
-            }
-
-            // Table pending migration (42P01 / PGRST204) allows fallback; otherwise report retryable error
-            if (claimError.code !== '42P01' && claimError.code !== 'PGRST204') {
+            } else if (claimError.code !== '42P01' && claimError.code !== 'PGRST204') {
+              // Real DB outage; return retryable 500 error
               logger.error('Database error claiming webhook event ID', claimError);
               return NextResponse.json(
                 { error: 'Webhook event store temporarily unavailable.' },
@@ -117,7 +179,7 @@ export async function POST(req: Request) {
             }
           } else {
             eventClaimed = true;
-            recentWebhookEventIds.add(eventId);
+            // Note: recentWebhookEventIds is intentionally populated ONLY upon completion
           }
         }
       } catch (claimErr) {
@@ -140,6 +202,7 @@ export async function POST(req: Request) {
     if (eventType === 'payment.captured') {
       paymentEntity = event.payload?.payment?.entity;
       if (!paymentEntity) {
+        await failEvent('Missing payment entity in payload.');
         return NextResponse.json({ error: 'Missing payment entity in payload.' }, { status: 400 });
       }
 
@@ -151,6 +214,7 @@ export async function POST(req: Request) {
         logger.warn(`Webhook received for uncaptured payment (status: ${paymentEntity.status}).`, {
           paymentId: razorpayPaymentId,
         });
+        await failEvent(`Payment is in '${paymentEntity.status}' status, not captured.`);
         return NextResponse.json(
           { received: true, ignored: `Payment is in '${paymentEntity.status}' status, not captured.` },
           { status: 200 }
@@ -161,6 +225,7 @@ export async function POST(req: Request) {
       paymentEntity = event.payload?.payment?.entity;
 
       if (!orderEntity) {
+        await failEvent('Missing order entity in payload.');
         return NextResponse.json({ error: 'Missing order entity in payload.' }, { status: 400 });
       }
 
@@ -172,6 +237,7 @@ export async function POST(req: Request) {
         logger.warn(`Webhook received for unpaid order event (status: ${orderEntity.status}).`, {
           orderId: razorpayOrderId,
         });
+        await failEvent(`Order is in '${orderEntity.status}' status, not paid.`);
         return NextResponse.json(
           { received: true, ignored: `Order is in '${orderEntity.status}' status, not paid.` },
           { status: 200 }
@@ -180,6 +246,7 @@ export async function POST(req: Request) {
     }
 
     if (!razorpayOrderId) {
+      await failEvent('No razorpay_order_id associated with event.');
       return NextResponse.json({ received: true, ignored: 'No razorpay_order_id associated with event.' }, { status: 200 });
     }
 
@@ -189,6 +256,7 @@ export async function POST(req: Request) {
         expectedOrder: razorpayOrderId,
         paymentOrder: paymentEntity.order_id,
       });
+      await failEvent('Payment entity order_id does not match event order.');
       return NextResponse.json(
         { error: 'Payment entity order_id does not match event order.' },
         { status: 400 }
@@ -199,6 +267,7 @@ export async function POST(req: Request) {
     const eventCurrency = paymentEntity?.currency || orderEntity?.currency;
     if (!eventCurrency || typeof eventCurrency !== 'string' || eventCurrency.toUpperCase() !== 'INR') {
       logger.error('Invalid currency in webhook payload', null, { currency: eventCurrency });
+      await failEvent('Payment currency does not match INR.');
       return NextResponse.json(
         { error: 'Payment currency does not match INR.' },
         { status: 400 }
@@ -234,6 +303,7 @@ export async function POST(req: Request) {
 
     if (!existingOrder) {
       logger.warn(`Webhook received for unknown Razorpay order ID: ${razorpayOrderId}`);
+      await failEvent(`Order not found for given Razorpay order ID: ${razorpayOrderId}`);
       return NextResponse.json(
         { error: 'Order not found for given Razorpay order ID.' },
         { status: 404 }
@@ -251,6 +321,7 @@ export async function POST(req: Request) {
           expectedPaise: expectedAmountPaise,
           receivedPaise: receivedAmountPaise,
         });
+        await failEvent('Payment amount does not match stored order amount.');
         return NextResponse.json(
           { error: 'Payment amount does not match stored order amount.' },
           { status: 400 }
@@ -264,6 +335,7 @@ export async function POST(req: Request) {
           expectedPaise: expectedAmountPaise,
           receivedPaise: receivedAmountPaise,
         });
+        await failEvent('Paid order amount does not match stored order amount.');
         return NextResponse.json(
           { error: 'Paid order amount does not match stored order amount.' },
           { status: 400 }
@@ -442,7 +514,27 @@ export async function POST(req: Request) {
       { status: 200 }
     );
   } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
     logger.error('Razorpay webhook processing error', error);
+
+    // If an error occurred mid-flight, transition claim to 'failed' and purge memory so Razorpay retries can succeed
+    if (eventId) {
+      recentWebhookEventIds.delete(eventId);
+      if (eventClaimed) {
+        try {
+          await supabaseAdmin
+            .from('processed_webhook_events')
+            .update({
+              status: 'failed',
+              error_message: errorMsg,
+            })
+            .eq('event_id', eventId);
+        } catch {
+          // Ignored if table unavailable
+        }
+      }
+    }
+
     return NextResponse.json({ error: 'Webhook processing failed.' }, { status: 500 });
   }
 }

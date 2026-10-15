@@ -10,41 +10,87 @@ interface PageProps {
   searchParams: Promise<{ orderId?: string }>;
 }
 
+interface OrderReceiptRecord {
+  id: string;
+  amount: number;
+  customer_name: string;
+  customer_email: string;
+  created_at: string;
+  razorpay_order_id: string;
+  user_id?: string | null;
+}
+
+function isWithinGuestViewingWindow(createdAt: string | null | undefined): boolean {
+  if (!createdAt) return false;
+  const createdAtMs = new Date(createdAt).getTime();
+  if (Number.isNaN(createdAtMs)) return false;
+  return Date.now() - createdAtMs < 2 * 60 * 60 * 1000;
+}
+
 export default async function ThankYouPage({ searchParams }: PageProps) {
   const { orderId } = await searchParams;
   const user = await getAuthenticatedUser();
   const supabase = createSupabaseAdminClient();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let orderData: any = null;
+  let orderData: OrderReceiptRecord | null = null;
   let itemsData: ReceiptItem[] = [];
 
-  if (orderId) {
-    const { data: order } = await supabase
-      .from('orders')
-      .select('id, amount, customer_name, customer_email, created_at, razorpay_order_id')
-      .or(`id.eq.${orderId},razorpay_order_id.eq.${orderId}`)
-      .maybeSingle();
+  if (orderId && typeof orderId === 'string') {
+    const cleanOrderId = orderId.trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanOrderId);
+    const isRzpOrder = /^order_[a-zA-Z0-9]+$/.test(cleanOrderId);
 
-    if (order) {
-      orderData = order;
-      // Fetch order items
-      const { data: orderItems } = await supabase
-        .from('order_items')
-        .select('product_name_snapshot, unit_price, products(name, price)')
-        .eq('order_id', order.id);
+    if (isUuid || isRzpOrder) {
+      const query = supabase
+        .from('orders')
+        .select('id, amount, customer_name, customer_email, created_at, razorpay_order_id, user_id');
 
-      if (orderItems && orderItems.length > 0) {
-        itemsData = orderItems.map((item) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const prod = item.products as any;
-          const name =
-            item.product_name_snapshot ||
-            (Array.isArray(prod) ? prod[0]?.name : prod?.name) ||
-            'Digital Product';
-          const price = item.unit_price || (Array.isArray(prod) ? prod[0]?.price : prod?.price) || 0;
-          return { name, price };
-        });
+      const { data: rawOrder } = isUuid
+        ? await query.eq('id', cleanOrderId).maybeSingle()
+        : await query.eq('razorpay_order_id', cleanOrderId).maybeSingle();
+
+      const order = rawOrder as OrderReceiptRecord | null;
+
+      if (order) {
+        // Ownership guard:
+        // If order belongs to an account (user_id is set), only the account holder may view it.
+        const orderUserId = order.user_id;
+        const orderEmail = order.customer_email?.trim().toLowerCase();
+        const userEmail = user?.email?.trim().toLowerCase();
+
+        let canView = false;
+        if (user && orderUserId && orderUserId === user.id) {
+          canView = true;
+        } else if (user && orderEmail && userEmail === orderEmail) {
+          canView = true;
+        } else if (!orderUserId && !user) {
+          // Unassigned guest order: allow viewing receipt on checkout confirmation if created within last 2 hours
+          if (isWithinGuestViewingWindow(order.created_at)) {
+            canView = true;
+          }
+        }
+
+        if (canView) {
+          orderData = order;
+          // Fetch order items
+          const { data: orderItems } = await supabase
+            .from('order_items')
+            .select('product_name_snapshot, unit_price, products(name, price)')
+            .eq('order_id', order.id);
+
+          if (orderItems && orderItems.length > 0) {
+            itemsData = orderItems.map((item) => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const prod = item.products as any;
+              const name =
+                item.product_name_snapshot ||
+                (Array.isArray(prod) ? prod[0]?.name : prod?.name) ||
+                'Digital Product';
+              const price = item.unit_price || (Array.isArray(prod) ? prod[0]?.price : prod?.price) || 0;
+              return { name, price };
+            });
+          }
+        }
       }
     }
   }
@@ -53,7 +99,7 @@ export default async function ThankYouPage({ searchParams }: PageProps) {
   if (!orderData && user?.email) {
     const { data: latestOrder } = await supabase
       .from('orders')
-      .select('id, amount, customer_name, customer_email, created_at, razorpay_order_id')
+      .select('id, amount, customer_name, customer_email, created_at, razorpay_order_id, user_id')
       .eq('customer_email', user.email)
       .order('created_at', { ascending: false })
       .limit(1)

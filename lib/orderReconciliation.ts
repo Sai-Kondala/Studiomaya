@@ -74,16 +74,37 @@ export async function reconcilePendingOrders(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rzpPayments: any = await razorpay.orders.fetchPayments(order.razorpay_order_id);
 
-      const items = Array.isArray(rzpPayments?.items) ? rzpPayments.items : [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const capturedPayment = items.find((p: any) => p.status === 'captured');
+      interface RzpPaymentItem {
+        id?: string;
+        order_id?: string;
+        status?: string;
+        currency?: string;
+        amount?: number;
+      }
+      const items: RzpPaymentItem[] = Array.isArray(rzpPayments?.items) ? (rzpPayments.items as RzpPaymentItem[]) : [];
+      const capturedPayment = items.find(
+        (p) => p.status === 'captured' && p.order_id === order.razorpay_order_id
+      );
 
-      const isPaid = rzpOrder.status === 'paid' || Boolean(capturedPayment);
+      // Fulfill ONLY when a concrete captured payment bound to this order is confirmed
+      if (capturedPayment) {
+        // 3. Currency validation: Must be strictly INR
+        if (!capturedPayment.currency || capturedPayment.currency.toUpperCase() !== 'INR') {
+          logger.error('Reconciliation currency mismatch for pending order', null, {
+            orderId: order.id,
+            expectedCurrency: 'INR',
+            receivedCurrency: capturedPayment.currency,
+          });
+          report.errors.push({
+            orderId: order.id,
+            error: `Currency mismatch: expected INR, received ${capturedPayment.currency}`,
+          });
+          continue;
+        }
 
-      if (isPaid) {
-        // 3. Amount validation check
+        // 4. Amount validation check
         const expectedPaise = Math.round(Number(order.amount) * 100);
-        const actualPaise = Number(capturedPayment?.amount ?? rzpOrder.amount_paid ?? 0);
+        const actualPaise = Number(capturedPayment.amount);
 
         if (actualPaise !== expectedPaise) {
           logger.error('Reconciliation amount mismatch detected for pending order', null, {
@@ -98,7 +119,7 @@ export async function reconcilePendingOrders(
           continue;
         }
 
-        const paymentId = capturedPayment?.id || null;
+        const paymentId = capturedPayment.id;
 
         // 4. Atomic conditional transition to paid
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -170,6 +191,18 @@ export async function reconcilePendingOrders(
           report.reconciled++;
         }
       } else {
+        if (rzpOrder?.status === 'paid') {
+          logger.error('Reconciliation anomaly: Razorpay order status is paid but no captured payment entity found', null, {
+            orderId: order.id,
+            razorpayOrderId: order.razorpay_order_id,
+          });
+          report.errors.push({
+            orderId: order.id,
+            error: 'Razorpay order status is paid but no captured payment entity was found for verification',
+          });
+          continue;
+        }
+
         // Order remains unpaid. Check if order is ancient (> 48 hours)
         const orderAgeHours = (Date.now() - new Date(order.created_at).getTime()) / (1000 * 60 * 60);
         if (orderAgeHours > 48) {
