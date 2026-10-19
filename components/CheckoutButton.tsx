@@ -332,23 +332,18 @@ export default function CheckoutButton({
 
       <button
         onClick={() => {
-          if (!user) {
-            const nextUrl = typeof window !== 'undefined'
-              ? window.location.pathname + window.location.search
-              : '/';
-            router.push(`/login?next=${encodeURIComponent(nextUrl)}`);
-            return;
-          }
-          if (!customerName) {
-            setCustomerName(user.user_metadata?.full_name || user.user_metadata?.name || '');
-          }
-          if (!email) {
-            setEmail(user.email || '');
+          if (user) {
+            if (!customerName) {
+              setCustomerName(user.user_metadata?.full_name || user.user_metadata?.name || '');
+            }
+            if (!email) {
+              setEmail(user.email || '');
+            }
           }
           setShowModal(true);
           setErrorMsg(null);
         }}
-        className="w-full bg-black text-white px-5 py-4 rounded-xl font-medium hover:bg-gray-800 transition-colors text-lg"
+        className="w-full bg-black text-white px-5 py-4 rounded-xl font-medium hover:bg-gray-800 transition-colors text-lg cursor-pointer"
       >
         Buy Now →
       </button>

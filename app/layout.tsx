@@ -16,11 +16,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased flex flex-col min-h-screen bg-gray-50">
-        {/* Razorpay script injected securely via Next.js */}
+      <body className="antialiased flex flex-col min-h-screen bg-[#F7F4EF] text-[#171717] selection:bg-[#C8B69A]/30 selection:text-[#171717]">
+        {/* Razorpay script loaded with afterInteractive to prevent hydration blocking */}
         <Script 
           src="https://checkout.razorpay.com/v1/checkout.js" 
-          strategy="beforeInteractive" 
+          strategy="afterInteractive" 
         />
         <ClientProviders>
           {children}

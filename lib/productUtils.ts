@@ -2,8 +2,11 @@
  * Utility functions for handling product image URLs.
  * Supports single URLs, comma-separated URLs, or JSON array strings.
  */
-export function getProductImages(imageUrl?: string | null): string[] {
+export function getProductImages(imageUrl?: string | string[] | null): string[] {
   if (!imageUrl) return [];
+  if (Array.isArray(imageUrl)) {
+    return imageUrl.map((item) => String(item).trim()).filter(Boolean);
+  }
   const trimmed = imageUrl.trim();
   if (!trimmed) return [];
 
@@ -24,7 +27,7 @@ export function getProductImages(imageUrl?: string | null): string[] {
     .filter(Boolean);
 }
 
-export function getProductPrimaryImage(imageUrl?: string | null): string {
+export function getProductPrimaryImage(imageUrl?: string | string[] | null): string {
   const images = getProductImages(imageUrl);
   return images[0] || '';
 }

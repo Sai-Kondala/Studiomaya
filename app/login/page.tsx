@@ -25,6 +25,7 @@ function LoginForm() {
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    e.stopPropagation();
     setError(null);
     setLoading(true);
 
@@ -43,16 +44,26 @@ function LoginForm() {
       }
 
       if (data.user) {
-        // Trigger cart sync & customer linking
+        // Persist token for middleware
+        if (data.session) {
+          document.cookie = `sb-auth-token=${data.session.access_token}; path=/; max-age=86400; SameSite=Lax`;
+        }
+
+        // Trigger cart sync & customer linking with timeout so redirect is never stalled
         try {
-          await syncCartAfterLogin();
+          await Promise.race([
+            syncCartAfterLogin(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Sync timeout')), 1500)),
+          ]);
         } catch (syncErr) {
           console.warn('Cart sync post-login warning:', syncErr);
         }
 
-        // Redirect to intended page or account dashboard
-        router.push(nextUrl);
-        router.refresh();
+        // Redirect to intended page
+        const destination = nextUrl;
+        window.location.href = destination;
+      } else {
+        setLoading(false);
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'An unexpected error occurred.';
@@ -161,7 +172,7 @@ function LoginForm() {
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 p-1"
+              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 p-1 cursor-pointer"
               aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -186,7 +197,7 @@ function LoginForm() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-black text-white py-3.5 px-6 rounded-xl font-medium hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2 transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+          className="w-full bg-black text-white py-3.5 px-6 rounded-xl font-medium hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2 transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-60 disabled:cursor-not-allowed shadow-sm cursor-pointer"
         >
           {loading ? (
             <>
@@ -201,7 +212,7 @@ function LoginForm() {
           )}
         </button>
 
-        {/* Optional OAuth Buttons (only rendered if configured and functional) */}
+        {/* Optional OAuth Buttons */}
         {(showGoogleAuth || showFacebookAuth) && (
           <div className="pt-2">
             <div className="relative flex py-2 items-center">
@@ -216,7 +227,7 @@ function LoginForm() {
                   type="button"
                   onClick={() => handleOAuthSignIn('google')}
                   disabled={loading}
-                  className="w-full flex items-center justify-center gap-3 py-3 px-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700"
+                  className="w-full flex items-center justify-center gap-3 py-3 px-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700 cursor-pointer"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -233,7 +244,7 @@ function LoginForm() {
                   type="button"
                   onClick={() => handleOAuthSignIn('facebook')}
                   disabled={loading}
-                  className="w-full flex items-center justify-center gap-3 py-3 px-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700"
+                  className="w-full flex items-center justify-center gap-3 py-3 px-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700 cursor-pointer"
                 >
                   <svg className="w-4 h-4 fill-[#1877F2]" viewBox="0 0 24 24">
                     <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
@@ -252,7 +263,7 @@ function LoginForm() {
           Don&apos;t have an account?{' '}
           <Link
             href={`/signup${nextUrl !== '/account' ? `?next=${encodeURIComponent(nextUrl)}` : ''}`}
-            className="font-semibold text-black hover:underline"
+            className="font-semibold text-black hover:underline cursor-pointer"
           >
             Create an account
           </Link>

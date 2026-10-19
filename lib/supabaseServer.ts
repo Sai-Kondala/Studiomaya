@@ -31,16 +31,30 @@ export async function createSupabaseServerClient() {
 
 /**
  * Returns the currently authenticated user from server session cookies,
- * validating the token cryptographically with Supabase Auth.
+ * validating the token cryptographically with Supabase Auth, with fallback
+ * to sb-auth-token cookie.
  */
 export async function getAuthenticatedUser() {
   try {
     const supabase = await createSupabaseServerClient();
     const { data: { user }, error } = await supabase.auth.getUser();
-    if (error || !user) {
-      return null;
+    if (user && !error) {
+      return user;
     }
-    return user;
+
+    // Fallback: Check sb-auth-token cookie if SSR cookie was absent or in refresh transition
+    const cookieStore = await cookies();
+    const authCookie = cookieStore.get('sb-auth-token');
+    if (authCookie?.value) {
+      const { createSupabaseAdminClient } = await import('@/lib/supabaseAdmin');
+      const supabaseAdmin = createSupabaseAdminClient();
+      const { data: { user: tokenUser } } = await supabaseAdmin.auth.getUser(authCookie.value);
+      if (tokenUser) {
+        return tokenUser;
+      }
+    }
+
+    return null;
   } catch {
     return null;
   }

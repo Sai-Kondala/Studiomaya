@@ -32,56 +32,35 @@ function SignupForm() {
   const nextUrl = getSafeRedirectUrl(rawNext, '/account');
 
   // Form states
-  const [step, setStep] = useState<'signup' | 'otp' | 'success'>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        return sessionStorage.getItem(SESSION_STORAGE_KEY_EMAIL) ? 'otp' : 'signup';
-      } catch {
-        return 'signup';
-      }
-    }
-    return 'signup';
-  });
-
-  const [name, setName] = useState(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        return sessionStorage.getItem(SESSION_STORAGE_KEY_NAME) || '';
-      } catch {
-        return '';
-      }
-    }
-    return '';
-  });
-
-  const [email, setEmail] = useState(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        return sessionStorage.getItem(SESSION_STORAGE_KEY_EMAIL) || '';
-      } catch {
-        return '';
-      }
-    }
-    return '';
-  });
-
+  const [step, setStep] = useState<'signup' | 'otp' | 'success'>('signup');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
   // OTP states
   const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(''));
-  const [cooldown, setCooldown] = useState(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        return sessionStorage.getItem(SESSION_STORAGE_KEY_EMAIL) ? 30 : 0;
-      } catch {
-        return 0;
-      }
-    }
-    return 0;
-  });
+  const [cooldown, setCooldown] = useState(0);
   const otpInputsRef = useRef<(HTMLInputElement | null)[]>([]);
+
+  // Restore saved signup session on client mount (prevents SSR hydration mismatch)
+  useEffect(() => {
+    try {
+      const savedEmail = sessionStorage.getItem(SESSION_STORAGE_KEY_EMAIL);
+      const savedName = sessionStorage.getItem(SESSION_STORAGE_KEY_NAME);
+      if (savedEmail) {
+        setEmail(savedEmail);
+        setStep('otp');
+        setCooldown(30);
+      }
+      if (savedName) {
+        setName(savedName);
+      }
+    } catch {
+      // Ignore
+    }
+  }, []);
 
   // Feedback & Loading states
   const [loading, setLoading] = useState(false);
@@ -181,14 +160,14 @@ function SignupForm() {
 
       // If email confirmation is disabled in Supabase, session is returned immediately
       if (data.session && data.user) {
+        document.cookie = `sb-auth-token=${data.session.access_token}; path=/; max-age=86400; SameSite=Lax`;
         setStep('success');
         try {
           await syncCartAfterLogin();
         } catch (syncErr) {
           console.warn('Cart sync post-signup warning:', syncErr);
         }
-        router.push(nextUrl);
-        router.refresh();
+        window.location.href = nextUrl;
         return;
       }
 
@@ -337,6 +316,10 @@ function SignupForm() {
 
       setStep('success');
 
+      if (data.session) {
+        document.cookie = `sb-auth-token=${data.session.access_token}; path=/; max-age=86400; SameSite=Lax`;
+      }
+
       // Post-verification cart synchronization and guest order linking
       try {
         await syncCartAfterLogin();
@@ -345,8 +328,7 @@ function SignupForm() {
       }
 
       // Redirect safely to intended destination
-      router.push(nextUrl);
-      router.refresh();
+      window.location.href = nextUrl;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'An unexpected error occurred.';
       setError(message);

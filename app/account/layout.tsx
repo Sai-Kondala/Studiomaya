@@ -17,14 +17,14 @@ export default async function AccountLayout({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-900">
+    <div className="min-h-screen bg-[#F7F4EF] flex flex-col font-sans text-[#171717]">
       <Navbar />
 
       <div className="max-w-6xl mx-auto px-4 sm:px-8 py-8 w-full flex-1">
         {/* Account Header */}
-        <div className="mb-8 border-b border-gray-200 pb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="mb-8 border-b border-[#C8B69A]/30 pb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-extrabold text-gray-950 tracking-tight">
+            <h1 className="text-3xl font-serif font-medium text-[#171717] tracking-tight">
               Customer Account
             </h1>
             <p className="text-sm text-gray-500 mt-1">

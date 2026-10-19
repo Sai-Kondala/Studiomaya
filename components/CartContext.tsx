@@ -21,6 +21,7 @@ type CartContextType = {
   setIsCartOpen: (isOpen: boolean) => void;
   user: User | null;
   isUserLoading: boolean;
+  isHydrated: boolean;
   syncCartAfterLogin: () => Promise<void>;
   logout: () => Promise<void>;
 };
@@ -29,27 +30,31 @@ const CartContext = createContext<CartContextType | undefined>(undefined);
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const savedCart = localStorage.getItem('digital-store-cart');
-        if (savedCart) {
-          return JSON.parse(savedCart);
-        }
-      } catch (e) {
-        console.error('Failed to parse cart', e);
-      }
-    }
-    return [];
-  });
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [isHydrated, setIsHydrated] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [isUserLoading, setIsUserLoading] = useState(true);
 
-  // Persist local cart to localStorage
+  // Load saved cart from localStorage after mount (prevents SSR hydration mismatch)
   useEffect(() => {
-    localStorage.setItem('digital-store-cart', JSON.stringify(cart));
-  }, [cart]);
+    try {
+      const savedCart = localStorage.getItem('digital-store-cart');
+      if (savedCart) {
+        setCart(JSON.parse(savedCart));
+      }
+    } catch (e) {
+      console.error('Failed to parse cart', e);
+    }
+    setIsHydrated(true);
+  }, []);
+
+  // Persist local cart to localStorage only after initial hydration
+  useEffect(() => {
+    if (isHydrated) {
+      localStorage.setItem('digital-store-cart', JSON.stringify(cart));
+    }
+  }, [cart, isHydrated]);
 
   // 3. Sync anonymous cart with server on login
   const syncCartAfterLogin = useCallback(async () => {
@@ -86,39 +91,64 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   // 4. Supabase auth listener and cart hydration
   useEffect(() => {
-    const supabase = getSupabaseBrowserClient();
+    let isMounted = true;
+    let subscription: { unsubscribe: () => void } | null = null;
 
-    // Check initial user
-    const checkInitialUser = async () => {
-      try {
-        const {
-          data: { user: initialUser },
-        } = await supabase.auth.getUser();
-        setUser(initialUser || null);
+    // Safety timeout: Never leave isUserLoading true for more than 600ms
+    const safetyTimer = setTimeout(() => {
+      if (isMounted) {
         setIsUserLoading(false);
-        if (initialUser) {
-          syncCartAfterLogin();
+      }
+    }, 600);
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+
+      // Check initial user
+      const checkInitialUser = async () => {
+        try {
+          const {
+            data: { user: initialUser },
+          } = await supabase.auth.getUser();
+          if (isMounted) {
+            setUser(initialUser || null);
+            setIsUserLoading(false);
+          }
+          if (initialUser) {
+            syncCartAfterLogin();
+          }
+        } catch {
+          if (isMounted) {
+            setIsUserLoading(false);
+          }
         }
-      } catch {
+      };
+      checkInitialUser();
+
+      const { data } = supabase.auth.onAuthStateChange(async (event: AuthChangeEvent, session: Session | null) => {
+        if (!isMounted) return;
+        const currentUser = session?.user || null;
+        setUser(currentUser);
+        setIsUserLoading(false);
+
+        if (event === 'SIGNED_IN' && currentUser) {
+          await syncCartAfterLogin();
+        }
+      });
+      subscription = data.subscription;
+    } catch (err) {
+      console.warn('Supabase client init warning in CartContext:', err);
+      if (isMounted) {
         setIsUserLoading(false);
       }
-    };
-    checkInitialUser();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event: AuthChangeEvent, session: Session | null) => {
-      const currentUser = session?.user || null;
-      setUser(currentUser);
-      setIsUserLoading(false);
-
-      if (event === 'SIGNED_IN' && currentUser) {
-        await syncCartAfterLogin();
-      }
-    });
+    }
 
     return () => {
-      subscription.unsubscribe();
+      isMounted = false;
+      clearTimeout(safetyTimer);
+      if (subscription) {
+        subscription.unsubscribe();
+      }
     };
   }, [syncCartAfterLogin]);
 
@@ -191,6 +221,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         setIsCartOpen,
         user,
         isUserLoading,
+        isHydrated,
         syncCartAfterLogin,
         logout,
       }}

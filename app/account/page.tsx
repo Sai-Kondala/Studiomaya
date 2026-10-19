@@ -4,6 +4,7 @@ import { getAuthenticatedUser } from '@/lib/supabaseServer';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import { redirect } from 'next/navigation';
 import { ShoppingBag, ArrowRight, Package, Clock, Calendar, CheckCircle2 } from 'lucide-react';
+import { DeleteAccountSection } from '@/components/DeleteAccountSection';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,8 +40,6 @@ export default async function AccountOverviewPage() {
   }
 
   // Enforce ownership:
-  // 1. If order has user_id, it must match user.id (never expose orders assigned to another user).
-  // 2. If order has no user_id (unclaimed guest), customer_email must match normalized user email.
   const allOrders = (rawOrders || []).filter((order: any) => {
     if (order.user_id) {
       return order.user_id === user.id;
@@ -95,29 +94,29 @@ export default async function AccountOverviewPage() {
     <div className="space-y-8">
       {/* Welcome Card & Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="md:col-span-2 bg-white rounded-3xl p-8 border border-gray-100 shadow-xs flex flex-col justify-between">
+        <div className="md:col-span-2 bg-[#FAF8F5] rounded-2xl p-8 border border-[#C8B69A]/35 shadow-xs flex flex-col justify-between">
           <div>
-            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-[#7A6953] font-semibold">
               Account Overview
             </span>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-950 mt-1">
+            <h2 className="text-2xl sm:text-3xl font-serif font-medium text-[#171717] mt-1">
               Hello, {customerName} 👋
             </h2>
-            <p className="text-sm text-gray-500 mt-2 leading-relaxed">
-              Welcome to your Studio Maya dashboard. Here you can access all your digital purchases, track order receipts, and manage your saved items.
+            <p className="text-xs text-[#171717]/65 mt-2 leading-relaxed font-sans">
+              Welcome to your StudioMaya dashboard. Here you can access all your digital purchases, track order receipts, and manage your saved items.
             </p>
           </div>
 
-          <div className="mt-6 pt-6 border-t border-gray-100 flex flex-wrap gap-6 text-sm">
+          <div className="mt-6 pt-6 border-t border-[#C8B69A]/20 flex flex-wrap gap-6 text-xs">
             <div>
-              <span className="text-xs text-gray-400 uppercase tracking-wider block">Email</span>
-              <span className="font-semibold text-gray-900">{user.email}</span>
+              <span className="text-[10px] font-mono text-[#171717]/50 uppercase tracking-wider block">Email</span>
+              <span className="font-semibold text-[#171717] font-mono">{user.email}</span>
             </div>
             {memberSince && (
               <div>
-                <span className="text-xs text-gray-400 uppercase tracking-wider block">Member Since</span>
-                <span className="font-semibold text-gray-900 flex items-center gap-1.5 mt-0.5">
-                  <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                <span className="text-[10px] font-mono text-[#171717]/50 uppercase tracking-wider block">Member Since</span>
+                <span className="font-semibold text-[#171717] flex items-center gap-1.5 mt-0.5">
+                  <Calendar className="w-3.5 h-3.5 text-[#C8B69A]" />
                   {memberSince}
                 </span>
               </div>
@@ -126,64 +125,64 @@ export default async function AccountOverviewPage() {
         </div>
 
         {/* Purchases Stat Card */}
-        <div className="bg-white rounded-3xl p-8 border border-gray-100 shadow-xs flex flex-col justify-between">
+        <div className="bg-[#FAF8F5] rounded-2xl p-8 border border-[#C8B69A]/35 shadow-xs flex flex-col justify-between">
           <div>
-            <div className="w-12 h-12 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-center text-gray-900 mb-4">
-              <Package className="w-6 h-6" />
+            <div className="w-12 h-12 bg-[#F7F4EF] border border-[#C8B69A]/30 rounded-xl flex items-center justify-center text-[#171717] mb-4">
+              <Package className="w-5 h-5" />
             </div>
-            <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-[#7A6953] font-semibold">
               Purchases
             </span>
-            <div className="text-4xl font-extrabold text-gray-950 mt-1">
+            <div className="text-4xl font-bold font-sans text-[#171717] mt-1">
               {totalPurchases}
             </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Confirmed digital templates & workspaces
+            <p className="text-xs text-[#171717]/60 mt-1 font-sans">
+              Confirmed digital templates &amp; workspaces
             </p>
           </div>
 
           <Link
             href="/account/orders"
-            className="mt-6 inline-flex items-center justify-between w-full text-sm font-semibold text-gray-900 hover:text-black group pt-4 border-t border-gray-100"
+            className="mt-6 inline-flex items-center justify-between w-full text-xs font-semibold uppercase tracking-wider text-[#171717] hover:text-[#5D4396] group pt-4 border-t border-[#C8B69A]/20"
           >
             <span>View All Purchases</span>
-            <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+            <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
           </Link>
         </div>
       </div>
 
       {/* Recent Orders Section */}
-      <div className="bg-white rounded-3xl p-8 border border-gray-100 shadow-xs">
+      <div className="bg-[#FAF8F5] rounded-2xl p-8 border border-[#C8B69A]/35 shadow-xs">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h3 className="text-lg font-bold text-gray-950">Recent Orders</h3>
-            <p className="text-xs text-gray-500 mt-0.5">Your most recent purchases and their current status</p>
+            <h3 className="text-xl font-serif font-medium text-[#171717]">Recent Orders</h3>
+            <p className="text-xs text-[#171717]/60 mt-0.5">Your most recent purchases and their current status</p>
           </div>
           <Link
             href="/account/orders"
-            className="text-xs font-semibold text-gray-600 hover:text-black flex items-center gap-1"
+            className="text-xs font-mono uppercase tracking-wider text-[#171717]/70 hover:text-[#171717] flex items-center gap-1"
           >
             <span>All Orders ({allOrders.length})</span>
-            <ArrowRight className="w-3.5 h-3.5" />
+            <ArrowRight className="w-3 h-3" />
           </Link>
         </div>
 
         {recentOrders.length === 0 ? (
-          <div className="text-center py-12 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
-            <ShoppingBag className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-            <h4 className="font-semibold text-gray-900 text-sm">No purchases yet</h4>
-            <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
+          <div className="text-center py-12 bg-[#F7F4EF] rounded-xl border border-dashed border-[#C8B69A]/40">
+            <ShoppingBag className="w-10 h-10 text-[#C8B69A] mx-auto mb-3" />
+            <h4 className="font-serif font-medium text-[#171717] text-base">No purchases yet</h4>
+            <p className="text-xs text-[#171717]/60 mt-1 max-w-sm mx-auto font-sans">
               You haven&apos;t placed any orders yet. Explore our templates catalogue to get started!
             </p>
             <Link
-              href="/"
-              className="mt-4 inline-block bg-black text-white px-5 py-2.5 rounded-xl text-xs font-medium hover:bg-gray-800 transition-colors"
+              href="/#catalog"
+              className="mt-4 inline-block bg-[#171717] text-[#F7F4EF] px-5 py-2.5 rounded-md text-xs uppercase tracking-wider font-medium hover:bg-[#2E2822] transition-colors"
             >
               Browse Templates
             </Link>
           </div>
         ) : (
-          <div className="divide-y divide-gray-100">
+          <div className="divide-y divide-[#C8B69A]/20">
             {recentOrders.map((order) => {
               const shortId = order.id ? order.id.split('-')[0].toUpperCase() : 'N/A';
               const orderDate = new Date(order.created_at).toLocaleDateString('en-IN', {
@@ -196,30 +195,30 @@ export default async function AccountOverviewPage() {
               return (
                 <div key={order.id} className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 first:pt-0 last:pb-0">
                   <div className="flex items-start gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-600 shrink-0 mt-0.5">
-                      <Package className="w-5 h-5" />
+                    <div className="w-10 h-10 rounded-xl bg-[#F7F4EF] border border-[#C8B69A]/30 flex items-center justify-center text-[#171717] shrink-0 mt-0.5">
+                      <Package className="w-4 h-4" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-gray-950">{productNames}</span>
+                        <span className="font-serif font-medium text-base text-[#171717]">{productNames}</span>
                         <span
-                          className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${
+                          className={`text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-md font-semibold ${
                             order.status === 'paid'
-                              ? 'bg-green-100 text-green-700'
-                              : 'bg-yellow-100 text-yellow-800'
+                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                              : 'bg-amber-50 text-amber-800 border border-amber-200'
                           }`}
                         >
                           {order.status === 'paid' ? 'Paid' : 'Pending'}
                         </span>
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-gray-500 mt-1">
-                        <span className="font-mono text-gray-400">ORD-{shortId}</span>
+                      <div className="flex items-center gap-3 text-xs text-[#171717]/60 mt-1 font-mono">
+                        <span>ORD-{shortId}</span>
                         <span>•</span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3 h-3" /> {orderDate}
+                        <span className="flex items-center gap-1 font-sans">
+                          <Clock className="w-3 h-3 text-[#C8B69A]" /> {orderDate}
                         </span>
                         <span>•</span>
-                        <span className="font-medium text-gray-900">₹{order.amount || 0}</span>
+                        <span className="font-bold text-[#171717] font-sans">₹{order.amount || 0}</span>
                       </div>
                     </div>
                   </div>
@@ -228,13 +227,13 @@ export default async function AccountOverviewPage() {
                     {order.status === 'paid' ? (
                       <Link
                         href="/account/orders"
-                        className="inline-flex items-center gap-1.5 text-xs font-semibold bg-black text-white px-4 py-2 rounded-xl hover:bg-gray-800 transition-colors"
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider bg-[#171717] text-[#F7F4EF] px-4 py-2 rounded-md hover:bg-[#2E2822] transition-colors"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         <span>Access Files</span>
                       </Link>
                     ) : (
-                      <span className="text-xs text-gray-400 font-medium">Pending verification</span>
+                      <span className="text-xs text-[#171717]/40 font-mono">Pending verification</span>
                     )}
                   </div>
                 </div>
@@ -248,30 +247,33 @@ export default async function AccountOverviewPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
         <Link
           href="/cart-checkout"
-          className="bg-white p-6 rounded-3xl border border-gray-100 hover:border-gray-300 transition-all shadow-xs group"
+          className="bg-[#FAF8F5] p-6 rounded-2xl border border-[#C8B69A]/35 hover:border-[#C8B69A]/80 transition-all shadow-xs group"
         >
           <div className="flex items-center justify-between mb-2">
-            <span className="font-bold text-gray-950">Saved Cart</span>
-            <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-black transition-transform group-hover:translate-x-1" />
+            <span className="font-serif font-medium text-lg text-[#171717]">Saved Cart</span>
+            <ArrowRight className="w-4 h-4 text-[#C8B69A] group-hover:text-[#171717] transition-transform group-hover:translate-x-1" />
           </div>
-          <p className="text-xs text-gray-500 leading-relaxed">
+          <p className="text-xs text-[#171717]/65 leading-relaxed font-sans">
             Review your persistent shopping cart and proceed to checkout with 7-day retention.
           </p>
         </Link>
 
         <Link
-          href="/"
-          className="bg-white p-6 rounded-3xl border border-gray-100 hover:border-gray-300 transition-all shadow-xs group"
+          href="/#catalog"
+          className="bg-[#FAF8F5] p-6 rounded-2xl border border-[#C8B69A]/35 hover:border-[#C8B69A]/80 transition-all shadow-xs group"
         >
           <div className="flex items-center justify-between mb-2">
-            <span className="font-bold text-gray-950">Store Catalogue</span>
-            <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-black transition-transform group-hover:translate-x-1" />
+            <span className="font-serif font-medium text-lg text-[#171717]">Store Catalogue</span>
+            <ArrowRight className="w-4 h-4 text-[#C8B69A] group-hover:text-[#171717] transition-transform group-hover:translate-x-1" />
           </div>
-          <p className="text-xs text-gray-500 leading-relaxed">
+          <p className="text-xs text-[#171717]/65 leading-relaxed font-sans">
             Discover new study planners, productivity dashboards, and finance trackers.
           </p>
         </Link>
       </div>
+
+      {/* Danger Zone: Account Deletion */}
+      <DeleteAccountSection />
     </div>
   );
 }

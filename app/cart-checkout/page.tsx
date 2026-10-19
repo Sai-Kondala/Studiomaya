@@ -64,6 +64,21 @@ export default function CartCheckoutPage() {
         throw new Error(data.error || 'Checkout failed');
       }
 
+      // 2. Ensure Razorpay SDK is available
+      if (typeof window !== 'undefined' && !(window as any).Razorpay) {
+        const loaded = await new Promise<boolean>((resolve) => {
+          const script = document.createElement('script');
+          script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+          script.async = true;
+          script.onload = () => resolve(true);
+          script.onerror = () => resolve(false);
+          document.body.appendChild(script);
+        });
+        if (!loaded || !(window as any).Razorpay) {
+          throw new Error('Payment gateway could not be loaded. Please disable ad-blockers or shields and try again.');
+        }
+      }
+
       // 2. Open Razorpay checkout modal
       const options = {
         key: data.keyId,

@@ -17,21 +17,23 @@ export function AddToCartButton({
   variant = 'outline',
   showIcon = false,
 }: AddToCartButtonProps) {
-  const { addToCart, cart } = useCart();
+  const { addToCart, cart, isHydrated } = useCart();
   
-  const inCart = cart.some(item => item.id === product.id);
+  const inCart = isHydrated && cart.some(item => item.id === product.id);
 
   const handleClick = (e: React.MouseEvent) => {
-    e.preventDefault(); // Prevent navigating if wrapped in a Link
+    e.preventDefault();
+    e.stopPropagation();
     addToCart(product);
   };
 
   const baseClasses = variant === 'outline' 
-    ? 'border-2 border-black text-black hover:bg-black hover:text-white transition-colors' 
-    : 'bg-black text-white hover:bg-gray-800 transition-colors';
+    ? 'border border-[#C8B69A]/70 text-[#171717] hover:border-[#171717] hover:bg-[#171717] hover:text-[#F7F4EF] transition-all' 
+    : 'bg-[#171717] text-[#F7F4EF] hover:bg-[#2E2822] transition-colors';
 
   return (
     <button
+      type="button"
       onClick={handleClick}
       className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap flex items-center justify-center gap-2 cursor-pointer ${baseClasses} ${className}`}
     >
