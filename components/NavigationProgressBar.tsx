@@ -36,6 +36,7 @@ function NavigationProgressInner() {
   const resetTimerRef = useRef<NodeJS.Timeout | null>(null);
   const safetyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isNavigatingRef = useRef(false);
+  const hasProgressRef = useRef(false);
   const startTimeRef = useRef<number>(0);
 
   const clearAllTimers = useCallback(() => {
@@ -45,9 +46,38 @@ function NavigationProgressInner() {
     if (safetyTimeoutRef.current) clearTimeout(safetyTimeoutRef.current);
   }, []);
 
+  const done = useCallback(() => {
+    if (!isNavigatingRef.current && !hasProgressRef.current) return;
+    isNavigatingRef.current = false;
+    clearAllTimers();
+
+    // Ensure user perceives visual click feedback even on ultra-fast responses
+    const elapsed = Date.now() - startTimeRef.current;
+    const minDisplayTime = 160;
+    const delay = Math.max(0, minDisplayTime - elapsed);
+
+    finishTimerRef.current = setTimeout(() => {
+      // Rush to 100%
+      setProgress(100);
+
+      // Fade out after completion
+      finishTimerRef.current = setTimeout(() => {
+        setOpacity(0);
+
+        // Hide and reset
+        resetTimerRef.current = setTimeout(() => {
+          hasProgressRef.current = false;
+          setVisible(false);
+          setProgress(0);
+        }, 250);
+      }, 180);
+    }, delay);
+  }, [clearAllTimers]);
+
   const start = useCallback(() => {
     clearAllTimers();
     isNavigatingRef.current = true;
+    hasProgressRef.current = true;
     startTimeRef.current = Date.now();
     setVisible(true);
     setOpacity(1);
@@ -70,34 +100,7 @@ function NavigationProgressInner() {
     safetyTimeoutRef.current = setTimeout(() => {
       done();
     }, 12000);
-  }, [clearAllTimers]);
-
-  const done = useCallback(() => {
-    if (!isNavigatingRef.current && progress === 0) return;
-    isNavigatingRef.current = false;
-    clearAllTimers();
-
-    // Ensure user perceives visual click feedback even on ultra-fast responses
-    const elapsed = Date.now() - startTimeRef.current;
-    const minDisplayTime = 160;
-    const delay = Math.max(0, minDisplayTime - elapsed);
-
-    finishTimerRef.current = setTimeout(() => {
-      // Rush to 100%
-      setProgress(100);
-
-      // Fade out after completion
-      finishTimerRef.current = setTimeout(() => {
-        setOpacity(0);
-
-        // Hide and reset
-        resetTimerRef.current = setTimeout(() => {
-          setVisible(false);
-          setProgress(0);
-        }, 250);
-      }, 180);
-    }, delay);
-  }, [clearAllTimers, progress]);
+  }, [clearAllTimers, done]);
 
   // Subscribe to external programmatic start/done calls
   useEffect(() => {
