@@ -2,13 +2,16 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useCart } from '@/components/CartContext';
 import { Navbar } from '@/components/Navbar';
+import { CartSkeleton } from '@/components/skeletons/CartSkeleton';
 import { Clock, ShoppingBag, ArrowRight } from 'lucide-react';
+import { startNavigationProgress } from '@/components/NavigationProgressBar';
 
 export default function CartPage() {
-  const { cart, removeFromCart, user } = useCart();
+  const { cart, removeFromCart, user, isHydrated } = useCart();
   const router = useRouter();
 
   const subtotal = cart.reduce((total, item) => total + item.price, 0);
@@ -22,7 +25,9 @@ export default function CartPage() {
           Shopping Cart
         </h1>
 
-        {cart.length === 0 ? (
+        {!isHydrated ? (
+          <CartSkeleton layout="page" />
+        ) : cart.length === 0 ? (
           <div className="bg-white rounded-3xl p-12 text-center border border-gray-100 shadow-xs">
             <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mx-auto mb-4 text-gray-400">
               <ShoppingBag className="w-8 h-8" />
@@ -44,11 +49,16 @@ export default function CartPage() {
             <div className="md:col-span-2 bg-white rounded-3xl border border-gray-100 p-6 sm:p-8 shadow-xs divide-y divide-gray-100">
               {cart.map((item) => (
                 <div key={item.id} className="py-5 first:pt-0 last:pb-0 flex gap-4 items-center">
-                  <img
-                    src={item.image_url}
-                    alt={item.name}
-                    className="w-20 h-20 object-cover rounded-2xl border border-gray-100"
-                  />
+                  <div className="relative w-20 h-20 overflow-hidden rounded-2xl border border-gray-100 bg-gray-50 shrink-0">
+                    <Image
+                      src={item.image_url || '/hero_3d.jpg'}
+                      alt={item.name}
+                      fill
+                      sizes="80px"
+                      className="object-cover"
+                      loading="lazy"
+                    />
+                  </div>
                   <div className="flex-1">
                     <h3 className="font-bold text-gray-950 text-base">{item.name}</h3>
                     <p className="text-xs text-gray-500 mt-0.5">Instant Digital Download</p>
@@ -85,6 +95,7 @@ export default function CartPage() {
 
               <button
                 onClick={() => {
+                  startNavigationProgress();
                   if (!user) {
                     router.push('/login?next=/cart-checkout');
                     return;

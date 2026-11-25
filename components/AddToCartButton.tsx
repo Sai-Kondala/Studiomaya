@@ -35,7 +35,7 @@ export function AddToCartButton({
     <button
       type="button"
       onClick={handleClick}
-      className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap flex items-center justify-center gap-2 cursor-pointer ${baseClasses} ${className}`}
+      className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all select-none ${baseClasses} ${className}`}
     >
       {inCart ? (
         <>

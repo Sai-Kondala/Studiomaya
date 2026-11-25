@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { getSupabaseBrowserClient } from '@/lib/supabaseClient';
 import { getSafeRedirectUrl } from '@/lib/safeRedirect';
 import { useCart } from '@/components/CartContext';
+import { startNavigationProgress } from '@/components/NavigationProgressBar';
 import { Eye, EyeOff, Lock, Mail, ArrowRight, AlertCircle } from 'lucide-react';
 
 function LoginForm() {
@@ -53,15 +54,15 @@ function LoginForm() {
         try {
           await Promise.race([
             syncCartAfterLogin(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Sync timeout')), 1500)),
+            new Promise((resolve) => setTimeout(resolve, 3000)),
           ]);
         } catch (syncErr) {
           console.warn('Cart sync post-login warning:', syncErr);
         }
 
-        // Redirect to intended page
-        const destination = nextUrl;
-        window.location.href = destination;
+        // Redirect smoothly to intended page
+        startNavigationProgress();
+        router.push(nextUrl);
       } else {
         setLoading(false);
       }

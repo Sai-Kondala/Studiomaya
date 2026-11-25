@@ -10,16 +10,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Reconcile customer profile and unassigned guest orders for verified user
-    try {
-      await linkOrCreateCustomer(user);
-      if (user.email) {
-        await linkGuestOrdersForUser(user.id, user.email);
-      }
-    } catch (reconcileErr) {
-      console.warn('Customer/order reconciliation post-login warning:', reconcileErr);
-    }
-
     const body = await request.json();
     if (!body || !Array.isArray(body.productIds)) {
       return NextResponse.json({ error: 'productIds must be an array' }, { status: 400 });
@@ -33,7 +23,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Cart merge exceeds maximum limit of 50 items.' }, { status: 400 });
     }
 
-    const { items, expired } = await mergeAnonymousCartIntoUser(user.id, productIds);
+    // Run customer reconciliation and cart merge concurrently
+    const [reconcileResult, mergeResult] = await Promise.allSettled([
+      (async () => {
+        try {
+          await linkOrCreateCustomer(user);
+          if (user.email) {
+            await linkGuestOrdersForUser(user.id, user.email);
+          }
+        } catch (reconcileErr) {
+          console.warn('Customer/order reconciliation post-login warning:', reconcileErr);
+        }
+      })(),
+      mergeAnonymousCartIntoUser(user.id, productIds),
+    ]);
+
+    if (mergeResult.status === 'rejected') {
+      throw mergeResult.reason;
+    }
+
+    const { items, expired } = mergeResult.value;
     return NextResponse.json({ success: true, items, expired });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to merge cart';

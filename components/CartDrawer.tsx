@@ -2,9 +2,11 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useCart } from './CartContext';
 import { useRouter } from 'next/navigation';
 import { Clock, ShoppingBag } from 'lucide-react';
+import { startNavigationProgress } from './NavigationProgressBar';
 
 export function CartDrawer() {
   const { cart, removeFromCart, isCartOpen, setIsCartOpen, user } = useCart();
@@ -16,6 +18,7 @@ export function CartDrawer() {
 
   const handleCheckout = () => {
     setIsCartOpen(false);
+    startNavigationProgress();
     if (!user) {
       router.push('/login?next=/cart-checkout');
       return;
@@ -66,11 +69,16 @@ export function CartDrawer() {
             <div className="space-y-4">
               {cart.map((item) => (
                 <div key={item.id} className="flex gap-4 border border-[#C8B69A]/30 p-3.5 rounded-xl bg-white shadow-2xs">
-                  <img 
-                    src={item.image_url} 
-                    alt={item.name} 
-                    className="w-16 h-16 object-cover rounded-lg border border-[#C8B69A]/20"
-                  />
+                  <div className="relative w-16 h-16 overflow-hidden rounded-lg border border-[#C8B69A]/20 bg-[#FAF8F5] shrink-0">
+                    <Image 
+                      src={item.image_url || '/hero_3d.jpg'} 
+                      alt={item.name} 
+                      fill
+                      sizes="64px"
+                      className="object-cover"
+                      loading="lazy"
+                    />
+                  </div>
                   <div className="flex-1 flex flex-col justify-between">
                     <div>
                       <h3 className="font-serif font-medium text-[#171717] text-sm line-clamp-2 leading-snug">{item.name}</h3>

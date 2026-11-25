@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navbar } from '@/components/Navbar';
-import { DynamicIslandReceipt, ReceiptItem } from '@/components/DynamicIslandReceipt';
+import type { ReceiptItem } from '@/components/DynamicIslandReceipt';
+import { ClientReceiptWrapper } from '@/components/ClientReceiptWrapper';
 import { createSupabaseAdminClient } from '@/lib/supabaseAdmin';
 import { getAuthenticatedUser } from '@/lib/supabaseServer';
 
@@ -169,7 +170,7 @@ export default async function ThankYouPage({ searchParams }: PageProps) {
         </div>
 
         {/* Dynamic Island Receipt Thermal Printer Component */}
-        <DynamicIslandReceipt
+        <ClientReceiptWrapper
           orderNumber={orderNumber}
           customerName={customerName}
           customerEmail={customerEmail}

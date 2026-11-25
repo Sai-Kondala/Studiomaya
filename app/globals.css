@@ -179,3 +179,31 @@ body {
 .animate-receipt-settle {
   animation: receiptSettle 0.45s ease-out;
 }
+
+/* StudioMaya Premium Skeleton Shimmer */
+@keyframes studiomayaShimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    #EAE6DF 0%,
+    #F3EFE9 50%,
+    #EAE6DF 100%
+  );
+  background-size: 200% 100%;
+  animation: studiomayaShimmer 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer {
+    animation: none;
+    background: #EAE6DF;
+  }
+}

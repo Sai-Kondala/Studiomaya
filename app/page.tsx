@@ -1,12 +1,14 @@
+import React, { Suspense } from 'react';
+import Image from 'next/image';
 import { supabase } from '../lib/supabase';
 import { Navbar } from '@/components/Navbar';
 import { ProductCatalog, ProductItem } from '@/components/ProductCatalog';
+import { ProductGridSkeleton } from '@/components/skeletons/ProductGridSkeleton';
 import { Sparkles, ArrowRight, ShieldCheck, Zap, RefreshCw } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
-export default async function Home() {
-  // Fetch only products marked as 'Published'
+async function ProductCatalogSection() {
   const { data: products, error } = await supabase
     .from('products')
     .select('*')
@@ -18,7 +20,10 @@ export default async function Home() {
   }
 
   const productList: ProductItem[] = products || [];
+  return <ProductCatalog initialProducts={productList} />;
+}
 
+export default async function Home() {
   return (
     <main className="min-h-screen bg-[#F7F4EF] text-[#171717] font-sans selection:bg-[#C8B69A]/30 overflow-x-clip">
       {/* Navigation Bar */}
@@ -96,11 +101,14 @@ export default async function Home() {
             <div className="relative animate-float-slow">
               {/* Main Tablet Mockup */}
               <div className="relative rounded-3xl overflow-hidden shadow-[0_24px_50px_-12px_rgba(23,23,23,0.12)] border border-[#C8B69A]/40 bg-[#FAF8F5] p-2">
-                <div className="rounded-2xl overflow-hidden bg-white">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                <div className="rounded-2xl overflow-hidden bg-white relative">
+                  <Image
                     src="/hero_3d.jpg"
                     alt="3D Notion Workspace Mockup"
+                    width={1200}
+                    height={750}
+                    priority
+                    sizes="(max-width: 1024px) 100vw, 580px"
                     className="w-full h-auto object-cover transform hover:scale-[1.01] transition-transform duration-700 ease-out"
                   />
                 </div>
@@ -186,8 +194,8 @@ export default async function Home() {
       </section>
 
       {/* Products Catalog Section */}
-      <section className="max-w-6xl mx-auto px-6 sm:px-8 pb-28">
-        <div className="mb-8">
+      <section id="catalog" className="max-w-6xl mx-auto px-6 sm:px-8 pb-28 scroll-mt-24">
+        <div id="categories" className="mb-8 scroll-mt-24">
           <h2 className="text-3xl sm:text-4xl font-serif text-[#171717] tracking-tight mb-2">
             The Template Library
           </h2>
@@ -196,8 +204,10 @@ export default async function Home() {
           </p>
         </div>
 
-        {/* Dynamic Client Catalog with Animated Filter Tabs & Enhanced Cards */}
-        <ProductCatalog initialProducts={productList} />
+        {/* Dynamic Client Catalog with Animated Filter Tabs & Enhanced Cards wrapped in Suspense */}
+        <Suspense fallback={<ProductGridSkeleton />}>
+          <ProductCatalogSection />
+        </Suspense>
       </section>
     </main>
   );

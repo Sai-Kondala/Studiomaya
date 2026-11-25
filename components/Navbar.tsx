@@ -10,6 +10,17 @@ export function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
+  const handleScrollTo = (e: React.MouseEvent<HTMLAnchorElement>, targetId: string) => {
+    if (typeof window !== 'undefined' && window.location.pathname === '/') {
+      e.preventDefault();
+      const el = document.getElementById(targetId);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        window.history.pushState(null, '', `/#${targetId}`);
+      }
+    }
+  };
+
   return (
     <nav className="border-b border-[#C8B69A]/30 bg-[#F7F4EF]/85 backdrop-blur-md sticky top-0 z-50 transition-all">
       <div className="flex justify-between items-center py-3.5 px-6 sm:px-8 max-w-6xl mx-auto">
@@ -27,10 +38,18 @@ export function Navbar() {
 
         {/* Desktop Nav Links */}
         <div className="hidden md:flex items-center space-x-8 text-xs font-medium tracking-[0.14em] uppercase text-[#171717]/75">
-          <Link href="/#catalog" className="hover:text-[#171717] transition-colors">
+          <Link
+            href="/#catalog"
+            onClick={(e) => handleScrollTo(e, 'catalog')}
+            className="hover:text-[#171717] transition-colors"
+          >
             Products
           </Link>
-          <Link href="/#catalog" className="hover:text-[#171717] transition-colors">
+          <Link
+            href="/#categories"
+            onClick={(e) => handleScrollTo(e, 'categories')}
+            className="hover:text-[#171717] transition-colors"
+          >
             Categories
           </Link>
           <Link href="/about" className="hover:text-[#171717] transition-colors">
@@ -141,14 +160,20 @@ export function Navbar() {
         <div className="md:hidden bg-[#FAF8F5]/98 backdrop-blur-md border-b border-[#C8B69A]/30 px-6 py-5 space-y-3.5 animate-in fade-in slide-in-from-top-2 text-xs uppercase tracking-wider">
           <Link
             href="/#catalog"
-            onClick={() => setMobileMenuOpen(false)}
+            onClick={(e) => {
+              setMobileMenuOpen(false);
+              handleScrollTo(e, 'catalog');
+            }}
             className="block py-2 text-[#171717] font-medium hover:text-[#C8B69A]"
           >
             Products
           </Link>
           <Link
-            href="/#catalog"
-            onClick={() => setMobileMenuOpen(false)}
+            href="/#categories"
+            onClick={(e) => {
+              setMobileMenuOpen(false);
+              handleScrollTo(e, 'categories');
+            }}
             className="block py-2 text-[#171717] font-medium hover:text-[#C8B69A]"
           >
             Categories

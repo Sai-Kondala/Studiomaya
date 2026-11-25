@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Image from 'next/image';
 import { useCart } from '@/components/CartContext';
 import { useRouter } from 'next/navigation';
+import { CartSkeleton } from '@/components/skeletons/CartSkeleton';
 import { Clock, ShieldCheck } from 'lucide-react';
 
 export default function CartCheckoutPage() {
@@ -154,6 +156,16 @@ export default function CartCheckoutPage() {
     }
   };
 
+  if (isUserLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8 font-sans text-gray-900">
+        <div className="max-w-4xl mx-auto">
+          <CartSkeleton layout="page" />
+        </div>
+      </div>
+    );
+  }
+
   if (cart.length === 0 && !isVerifying && !isSuccess) return null;
 
   return (
@@ -281,7 +293,16 @@ export default function CartCheckoutPage() {
           <div className="space-y-4 mb-6 divide-y divide-gray-100">
             {cart.map((item) => (
               <div key={item.id} className="flex gap-4 items-center pt-4 first:pt-0">
-                <img src={item.image_url} alt={item.name} className="w-16 h-16 object-cover rounded-xl border border-gray-100" />
+                <div className="relative w-16 h-16 overflow-hidden rounded-xl border border-gray-100 bg-gray-50 shrink-0">
+                  <Image
+                    src={item.image_url || '/hero_3d.jpg'}
+                    alt={item.name}
+                    fill
+                    sizes="64px"
+                    className="object-cover"
+                    loading="lazy"
+                  />
+                </div>
                 <div className="flex-1">
                   <h4 className="font-bold text-gray-950 text-sm">{item.name}</h4>
                   <p className="text-xs text-gray-500 mt-0.5">Instant Digital Download</p>

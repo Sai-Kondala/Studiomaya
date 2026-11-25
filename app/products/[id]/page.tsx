@@ -1,10 +1,12 @@
 import { supabase } from '../../../lib/supabase';
 import Link from 'next/link';
+import Image from 'next/image';
 import { notFound } from 'next/navigation';
 import CheckoutButton from '../../../components/CheckoutButton';
 import ProductGallery from '../../../components/ProductGallery';
 import { Navbar } from '@/components/Navbar';
 import { AddToCartButton } from '@/components/AddToCartButton';
+import { ClickableCard } from '@/components/ClickableCard';
 import { getProductImages, getProductPrimaryImage } from '@/lib/productUtils';
 import { ArrowLeft, ShieldCheck, Zap, RefreshCw } from 'lucide-react';
 
@@ -12,14 +14,24 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   // 1. Await the params first (Required in newer Next.js versions)
   const { id } = await params;
 
-  // 2. Fetch the specific product using the awaited ID
-  const { data: product, error } = await supabase
-    .from('products')
-    .select('*')
-    .eq('id', id)
-    .single();
+  // 2. Fetch product and catalog items concurrently to minimize server response latency
+  const [productResult, relatedResult] = await Promise.all([
+    supabase
+      .from('products')
+      .select('*')
+      .eq('id', id)
+      .single(),
+    supabase
+      .from('products')
+      .select('*')
+      .eq('status', 'Published')
+      .neq('id', id)
+      .order('created_at', { ascending: false })
+      .limit(8),
+  ]);
 
-  if (error || !product || product.status !== 'Published') {
+  const product = productResult.data;
+  if (productResult.error || !product || product.status !== 'Published') {
     notFound();
   }
 
@@ -27,16 +39,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const images = getProductImages(product.image_url);
   const primaryImage = getProductPrimaryImage(product.image_url);
 
-  // 3. Fetch related products (prefer same category, fallback to other published products)
-  const { data: allPublished } = await supabase
-    .from('products')
-    .select('*')
-    .eq('status', 'Published')
-    .neq('id', id)
-    .order('created_at', { ascending: false })
-    .limit(8);
-
-  const relatedProducts = (allPublished || [])
+  const relatedProducts = (relatedResult.data || [])
     .sort((a, b) => {
       const aSame = product.category && a.category === product.category ? 1 : 0;
       const bSame = product.category && b.category === product.category ? 1 : 0;
@@ -160,16 +163,21 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             {relatedProducts.map((relProduct, idx) => {
               const relPrimaryImage = getProductPrimaryImage(relProduct.image_url);
               return (
-                <div
+                <ClickableCard
                   key={relProduct.id}
-                  className="bg-[#FAF8F5] rounded-2xl border border-[#C8B69A]/35 hover:border-[#C8B69A]/80 p-4 flex flex-col transition-all duration-200 hover:-translate-y-1 shadow-2xs group"
+                  href={`/products/${relProduct.id}`}
+                  ariaLabel={`View ${relProduct.name} template`}
+                  className="bg-[#FAF8F5] rounded-2xl border border-[#C8B69A]/35 hover:border-[#C8B69A]/80 p-4 flex flex-col transition-all duration-200 hover:-translate-y-1 shadow-2xs group active:scale-[0.995]"
                 >
                   <Link href={`/products/${relProduct.id}`} className="block relative aspect-16/10 overflow-hidden bg-[#EFECE6] rounded-xl mb-3 border border-[#C8B69A]/20">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
+                    <Image
                       src={relPrimaryImage || '/hero_3d.jpg'}
                       alt={relProduct.name}
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      fill
+                      sizes="(max-width: 768px) 100vw, 360px"
+                      className="object-cover transition-transform duration-300 group-hover:scale-105"
+                      loading="lazy"
+                      decoding="async"
                     />
                     {relProduct.category && (
                       <span className="absolute top-2.5 left-2.5 bg-[#FAF8F5]/95 backdrop-blur-xs text-[#7A6953] border border-[#C8B69A]/40 text-[10px] font-mono uppercase tracking-widest font-semibold px-2 py-0.5 rounded-md shadow-2xs">
@@ -230,7 +238,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                       </div>
                     </div>
                   </div>
-                </div>
+                </ClickableCard>
               );
             })}
           </div>

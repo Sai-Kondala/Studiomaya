@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { AddToCartButton } from '@/components/AddToCartButton';
+import { ClickableCard } from '@/components/ClickableCard';
 import { getProductPrimaryImage } from '@/lib/productUtils';
-import { Sparkles, Layers, ArrowRight } from 'lucide-react';
+import { Layers, ArrowRight } from 'lucide-react';
 
 export interface ProductItem {
   id: string;
@@ -27,6 +29,21 @@ const CATEGORIES = ['All', 'Notion Templates', 'Productivity', 'Study', 'Finance
 
 export function ProductCatalog({ initialProducts }: ProductCatalogProps) {
   const [activeCategory, setActiveCategory] = useState('All');
+  const [unoptimizedImages, setUnoptimizedImages] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.hash) {
+      const hash = window.location.hash.slice(1);
+      if (hash === 'categories' || hash === 'catalog') {
+        const el = document.getElementById(hash);
+        if (el) {
+          setTimeout(() => {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 120);
+        }
+      }
+    }
+  }, []);
 
   const filteredProducts = useMemo(() => {
     if (activeCategory === 'All') return initialProducts;
@@ -41,7 +58,7 @@ export function ProductCatalog({ initialProducts }: ProductCatalogProps) {
   }, [initialProducts, activeCategory]);
 
   return (
-    <div id="catalog" className="scroll-mt-24">
+    <div className="scroll-mt-24">
       {/* Category Filter Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-10 pb-5 border-b border-[#C8B69A]/30">
         <div className="flex flex-wrap items-center gap-2">
@@ -82,20 +99,27 @@ export function ProductCatalog({ initialProducts }: ProductCatalogProps) {
           const itemCode = `NOTION SYSTEM — 0${index + 1}`;
 
           return (
-            <div
+            <ClickableCard
               key={product.id}
-              className="bg-[#FAF8F5] rounded-2xl p-4 border border-[#C8B69A]/40 hover:border-[#C8B69A]/90 editorial-card flex flex-col group relative transition-all"
+              href={`/products/${product.id}`}
+              ariaLabel={`View ${product.name} template`}
+              className="bg-[#FAF8F5] rounded-2xl p-4 border border-[#C8B69A]/40 hover:border-[#C8B69A]/90 editorial-card flex flex-col group relative transition-all duration-200 hover:-translate-y-1 hover:shadow-md active:scale-[0.995]"
             >
               {/* Product Preview Image */}
               <Link
                 href={`/products/${product.id}`}
                 className="block relative overflow-hidden rounded-xl aspect-[16/11] bg-[#EFECE6] mb-4.5 group/img border border-[#C8B69A]/20"
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
+                <Image
                   src={primaryImage || '/hero_3d.jpg'}
                   alt={product.name}
-                  className="w-full h-full object-cover transform group-hover/img:scale-[1.03] transition-transform duration-700 ease-out"
+                  fill
+                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 380px"
+                  className="object-cover transform group-hover/img:scale-[1.03] transition-transform duration-700 ease-out"
+                  loading="lazy"
+                  decoding="async"
+                  unoptimized={Boolean(unoptimizedImages[product.id])}
+                  onError={() => setUnoptimizedImages((prev) => ({ ...prev, [product.id]: true }))}
                 />
 
                 {/* Badge: Category / Status */}
@@ -174,7 +198,7 @@ export function ProductCatalog({ initialProducts }: ProductCatalogProps) {
                   </div>
                 </div>
               </div>
-            </div>
+            </ClickableCard>
           );
         })}
       </div>

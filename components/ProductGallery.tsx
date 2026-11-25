@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 
 interface ProductGalleryProps {
   images: string[];
@@ -9,6 +10,7 @@ interface ProductGalleryProps {
 
 export default function ProductGallery({ images, productName }: ProductGalleryProps) {
   const [activeImage, setActiveImage] = useState<string>(images[0] || '');
+  const [unoptimizedImages, setUnoptimizedImages] = useState<Record<string, boolean>>({});
 
   if (images.length === 0) {
     return (
@@ -20,19 +22,28 @@ export default function ProductGallery({ images, productName }: ProductGalleryPr
 
   const currentDisplayImage = activeImage || images[0];
 
+  const handleImageError = (imgSrc: string) => {
+    setUnoptimizedImages((prev) => ({ ...prev, [imgSrc]: true }));
+  };
+
   return (
     <div className="space-y-4">
-      {/* Main Feature Image */}
-      <div className="bg-neutral-50/50 rounded-2xl border border-gray-200 overflow-hidden shadow-sm w-full h-[360px] sm:h-[420px] md:h-[480px] flex items-center justify-center p-3">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img 
+      {/* Main Feature Image (Above the fold - prioritized) */}
+      <div className="relative bg-neutral-50/50 rounded-2xl border border-gray-200 overflow-hidden shadow-xs w-full h-[360px] sm:h-[420px] md:h-[480px] flex items-center justify-center p-3">
+        <Image 
           src={currentDisplayImage} 
           alt={productName} 
-          className="max-w-full max-h-full object-contain rounded-xl drop-shadow-xs transition-opacity duration-200" 
+          fill
+          priority
+          loading="eager"
+          sizes="(max-width: 768px) 100vw, 550px"
+          className="object-contain p-3 rounded-xl drop-shadow-xs transition-opacity duration-200" 
+          unoptimized={Boolean(unoptimizedImages[currentDisplayImage])}
+          onError={() => handleImageError(currentDisplayImage)}
         />
       </div>
 
-      {/* Thumbnails (only if multiple images) */}
+      {/* Thumbnails (Lazy loaded) */}
       {images.length > 1 && (
         <div className="flex gap-3 overflow-x-auto pb-2">
           {images.map((img, idx) => {
@@ -42,17 +53,22 @@ export default function ProductGallery({ images, productName }: ProductGalleryPr
                 key={idx}
                 type="button"
                 onClick={() => setActiveImage(img)}
-                className={`w-20 h-16 rounded-xl overflow-hidden flex-shrink-0 border-2 transition-all cursor-pointer bg-neutral-50 flex items-center justify-center p-1 ${
+                className={`relative w-20 h-16 rounded-xl overflow-hidden flex-shrink-0 border-2 transition-all cursor-pointer bg-neutral-50 flex items-center justify-center p-1 ${
                   isSelected 
                     ? 'border-black ring-2 ring-black/10 scale-105' 
                     : 'border-gray-200 opacity-60 hover:opacity-100 hover:border-gray-400'
                 }`}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img 
+                <Image 
                   src={img} 
                   alt={`${productName} thumbnail ${idx + 1}`} 
-                  className="max-w-full max-h-full object-contain" 
+                  fill
+                  sizes="80px"
+                  className="object-contain p-1" 
+                  loading="lazy"
+                  decoding="async"
+                  unoptimized={Boolean(unoptimizedImages[img])}
+                  onError={() => handleImageError(img)}
                 />
               </button>
             );

@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCart } from './CartContext';
+import { startNavigationProgress } from './NavigationProgressBar';
 
 
 /* =========================================================
@@ -236,6 +237,7 @@ export default function CheckoutButton({
 
             const verifyResult: { error?: string } = await verifyRes.json();
             if (verifyRes.ok) {
+              startNavigationProgress();
               router.push('/thank-you');
             } else {
               setErrorMsg(
@@ -332,13 +334,17 @@ export default function CheckoutButton({
 
       <button
         onClick={() => {
-          if (user) {
-            if (!customerName) {
-              setCustomerName(user.user_metadata?.full_name || user.user_metadata?.name || '');
-            }
-            if (!email) {
-              setEmail(user.email || '');
-            }
+          if (!user) {
+            const currentPath = typeof window !== 'undefined' ? window.location.pathname : `/products/${product.id}`;
+            startNavigationProgress();
+            router.push(`/login?next=${encodeURIComponent(currentPath)}`);
+            return;
+          }
+          if (!customerName) {
+            setCustomerName(user.user_metadata?.full_name || user.user_metadata?.name || '');
+          }
+          if (!email) {
+            setEmail(user.email || '');
           }
           setShowModal(true);
           setErrorMsg(null);

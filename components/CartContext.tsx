@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import type { User, AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { getSupabaseBrowserClient } from '@/lib/supabaseClient';
@@ -35,6 +35,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [isUserLoading, setIsUserLoading] = useState(true);
+  const isSyncingCartRef = useRef(false);
+  const hasSyncedUserRef = useRef<string | null>(null);
 
   // Load saved cart from localStorage after mount (prevents SSR hydration mismatch)
   useEffect(() => {
@@ -57,7 +59,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [cart, isHydrated]);
 
   // 3. Sync anonymous cart with server on login
-  const syncCartAfterLogin = useCallback(async () => {
+  const syncCartAfterLogin = useCallback(async (userId?: string) => {
+    if (isSyncingCartRef.current) return;
+    if (userId && hasSyncedUserRef.current === userId) return;
+
+    isSyncingCartRef.current = true;
     try {
       const rawLocal = localStorage.getItem('digital-store-cart');
       let localItems: CartItem[] = [];
@@ -83,9 +89,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           setCart(data.items);
           localStorage.setItem('digital-store-cart', JSON.stringify(data.items));
         }
+        if (userId) {
+          hasSyncedUserRef.current = userId;
+        }
       }
     } catch (err) {
       console.warn('Failed to sync cart after login:', err);
+    } finally {
+      isSyncingCartRef.current = false;
     }
   }, []);
 
@@ -115,7 +126,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             setIsUserLoading(false);
           }
           if (initialUser) {
-            syncCartAfterLogin();
+            syncCartAfterLogin(initialUser.id);
           }
         } catch {
           if (isMounted) {
@@ -132,7 +143,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         setIsUserLoading(false);
 
         if (event === 'SIGNED_IN' && currentUser) {
-          await syncCartAfterLogin();
+          await syncCartAfterLogin(currentUser.id);
+        } else if (event === 'SIGNED_OUT') {
+          hasSyncedUserRef.current = null;
         }
       });
       subscription = data.subscription;

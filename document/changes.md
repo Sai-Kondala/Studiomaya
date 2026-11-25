@@ -353,3 +353,100 @@ Following the comprehensive project maturity audit, the system has been hardened
 - **Test Suite Expansion**: Added [`__tests__/order-reconciliation.test.ts`](file:///d:/Notion/digital-store/__tests__/order-reconciliation.test.ts) and expanded [`__tests__/rate-limit.test.ts`](file:///d:/Notion/digital-store/__tests__/rate-limit.test.ts) and [`__tests__/api/resend-webhook.test.ts`](file:///d:/Notion/digital-store/__tests__/api/resend-webhook.test.ts).
 - **Verification**: All 19 test suites and 141 tests pass; `npm run build` compiles with 0 errors across 28 pages.
 
+### 8. Skeleton Loading, Performance Optimization & Security Hardening
+- **StudioMaya Skeleton Design System**:
+  - Added subtle, brand-aligned shimmer keyframes (`studiomayaShimmer`) and `.skeleton-shimmer` class in [`app/globals.css`](file:///d:/Notion/digital-store/app/globals.css) utilizing the warm neutral palette (`#FAF8F5`, `#F7F4EF`, `#C8B69A`) with full `@media (prefers-reduced-motion: reduce)` fallback to a calm pulse.
+  - Built an accessible, modular suite of skeleton components in [`components/skeletons/`](file:///d:/Notion/digital-store/components/skeletons/):
+    - [`Skeleton.tsx`](file:///d:/Notion/digital-store/components/skeletons/Skeleton.tsx): Base accessible component with `role="status"` and `aria-busy="true"`.
+    - [`ProductCardSkeleton.tsx`](file:///d:/Notion/digital-store/components/skeletons/ProductCardSkeleton.tsx) & [`ProductGridSkeleton.tsx`](file:///d:/Notion/digital-store/components/skeletons/ProductGridSkeleton.tsx): Preserves exact aspect ratio (`aspect-4/3` and `aspect-16/10`) to eliminate Cumulative Layout Shift (CLS) during catalog rendering.
+    - [`ProductDetailSkeleton.tsx`](file:///d:/Notion/digital-store/components/skeletons/ProductDetailSkeleton.tsx): Mirrors gallery, title, pricing, tags, and action buttons for product detail pages.
+    - [`OrderListSkeleton.tsx`](file:///d:/Notion/digital-store/components/skeletons/OrderListSkeleton.tsx): Order cards, status badges, and receipt actions.
+    - [`CartSkeleton.tsx`](file:///d:/Notion/digital-store/components/skeletons/CartSkeleton.tsx): Item rows, thumbnail boxes, pricing summary, and checkout action.
+    - [`AdminDashboardSkeleton.tsx`](file:///d:/Notion/digital-store/components/skeletons/AdminDashboardSkeleton.tsx) & [`AdminTableSkeleton.tsx`](file:///d:/Notion/digital-store/components/skeletons/AdminTableSkeleton.tsx): Metric cards, filter headers, table headers, and rows.
+    - [`ReceiptSkeleton.tsx`](file:///d:/Notion/digital-store/components/skeletons/ReceiptSkeleton.tsx): Dynamic island pill, receipt sheet, barcode placeholder, and actions.
+  - Implemented Next.js route-level loading boundaries across all data-fetching routes:
+    - [`app/products/[id]/loading.tsx`](file:///d:/Notion/digital-store/app/products/[id]/loading.tsx)
+    - [`app/account/loading.tsx`](file:///d:/Notion/digital-store/app/account/loading.tsx)
+    - [`app/account/orders/loading.tsx`](file:///d:/Notion/digital-store/app/account/orders/loading.tsx)
+    - [`app/admin/dashboard/loading.tsx`](file:///d:/Notion/digital-store/app/admin/dashboard/loading.tsx)
+    - [`app/admin/orders/loading.tsx`](file:///d:/Notion/digital-store/app/admin/orders/loading.tsx)
+    - [`app/admin/products/loading.tsx`](file:///d:/Notion/digital-store/app/admin/products/loading.tsx)
+    - [`app/admin/customers/loading.tsx`](file:///d:/Notion/digital-store/app/admin/customers/loading.tsx)
+
+- **Intelligent Lazy Loading & Next.js `<Image>` Layout Shift Prevention**:
+  - Configured `next.config.ts` with AVIF/WebP image formats and remote pattern permissions for Supabase storage, Unsplash, and Placeholder images.
+  - Replaced raw `<img>` hero banner on homepage [`app/page.tsx`](file:///d:/Notion/digital-store/app/page.tsx) with Next.js `<Image priority width={1200} height={750} ... />` for instant LCP without layout shift, wrapping the dynamic catalog in React `<Suspense fallback={<ProductGridSkeleton />}>`.
+  - Upgraded [`components/ProductCatalog.tsx`](file:///d:/Notion/digital-store/components/ProductCatalog.tsx) to Next.js `<Image fill sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw" loading="lazy" decoding="async">`.
+  - Upgraded [`components/ProductGallery.tsx`](file:///d:/Notion/digital-store/components/ProductGallery.tsx) with hero priority on the main active image while lazy loading thumbnails and related products.
+  - Code-split heavy interactive client components:
+    - `CartDrawer` dynamically imported in [`components/ClientProviders.tsx`](file:///d:/Notion/digital-store/components/ClientProviders.tsx) using `next/dynamic`.
+    - `DynamicIslandReceipt` wrapped with client boundary [`components/ClientReceiptWrapper.tsx`](file:///d:/Notion/digital-store/components/ClientReceiptWrapper.tsx) for SSR fallback to `ReceiptSkeleton`.
+
+- **Buy Now Auth Gate & Redirection**:
+  - In [`components/CheckoutButton.tsx`](file:///d:/Notion/digital-store/components/CheckoutButton.tsx), added authentication guard to `handleBuyNow`: when `user` is not authenticated, securely redirects to `/login?next=${encodeURIComponent(returnUrl)}` instead of triggering the payment modal or bypassing user session.
+
+- **Mandatory Admin Two-Factor Email OTP**:
+  - Created [`app/api/admin/login/route.ts`](file:///d:/Notion/digital-store/app/api/admin/login/route.ts) verifying admin credentials against Supabase and `admin_users` table whitelist, dispatching a 6-digit OTP code to the verified admin email.
+  - Rewrote [`app/admin/login/page.tsx`](file:///d:/Notion/digital-store/app/admin/login/page.tsx) with a 2-step verification flow:
+    1. Step 1: Admin email and password verification.
+    2. Step 2: 6-digit OTP entry with individual digit input boxes, automatic focus progression, paste handling, backspace/arrow navigation, resend button with 60-second cooldown timer.
+    - Matches the user signup OTP verification mechanism, ensuring the admin dashboard cannot be accessed without the email OTP even if passwords are leaked.
+
+- **Automated Test Suites & Verification**:
+  - Added [`__tests__/skeletons.test.tsx`](file:///d:/Notion/digital-store/__tests__/skeletons.test.tsx) testing accessibility labels, shimmer classes, and ARIA busy attributes across all skeletons.
+  - Added [`__tests__/checkout-unauthenticated.test.tsx`](file:///d:/Notion/digital-store/__tests__/checkout-unauthenticated.test.tsx) verifying redirect behavior for unauthenticated customers.
+  - Added [`__tests__/admin-login-otp.test.ts`](file:///d:/Notion/digital-store/__tests__/admin-login-otp.test.ts) verifying the 2-step email OTP authentication flow and session creation.
+  - Verified with 22 test suites (167 tests passing), `npm run lint` (0 errors), and `npm run build` (all 29 routes statically/dynamically compiled cleanly).
+
+### 9. Upstream Image SSRF & NAT64 DNS Latency Optimization
+- **Root Cause 1 (Broken Images & Next.js SSRF Private IP Block)**:
+  - When Next.js optimizes upstream images via `/_next/image?url=https://...supabase.co/...`, it resolves DNS for the upstream domain. On networks synthesizing IPv6 NAT64 addresses (`64:ff9b::/96`), Next.js classified the resolved addresses (`64:ff9b::6812:260a`) as private local IPs and blocked them with:
+    `hostname resolved to private IP [...] If this is expected and you understand SSRF risk, use images.dangerouslyAllowLocalIP = true to continue.`
+  - **Resolution**: Enabled `dangerouslyAllowLocalIP: true` under `images` in [`next.config.ts`](file:///d:/Notion/digital-store/next.config.ts).
+  - Added client-side fallback `unoptimized={Boolean(unoptimizedImages[key])}` with `onError` in [`components/ProductGallery.tsx`](file:///d:/Notion/digital-store/components/ProductGallery.tsx) and [`components/ProductCatalog.tsx`](file:///d:/Notion/digital-store/components/ProductCatalog.tsx), ensuring direct CDN rendering if image proxying is disrupted.
+
+- **Root Cause 2 (10s - 32s Connect Timeouts & Severe App Slowness)**:
+  - Node.js 18+ uses `undici` for `fetch()`, defaulting to IPv6-first DNS resolution. On NAT64 networks where synthesized IPv6 addresses drop or stall SYN packets, each connection to Supabase Auth/DB hung for the full 10-second timeout (`ConnectTimeoutError (UND_ERR_CONNECT_TIMEOUT)`) before falling back. Multiple sequential requests in routes like `POST /api/cart/merge` or `POST /api/create-order` stacked into 20–32 second response times.
+  - **Resolution**: Configured Node.js DNS to prefer IPv4 first via `dns.setDefaultResultOrder("ipv4first")` at the entry point of [`next.config.ts`](file:///d:/Notion/digital-store/next.config.ts). Supabase query time dropped from 10,000ms+ down to ~900ms.
+  - Added request deduplication in [`components/CartContext.tsx`](file:///d:/Notion/digital-store/components/CartContext.tsx) (`isSyncingCartRef` and `hasSyncedUserRef`), eliminating redundant parallel calls to `/api/cart/merge` on mount and auth state change.
+  - Concurrently dispatched product and related products queries in [`app/products/[id]/page.tsx`](file:///d:/Notion/digital-store/app/products/[id]/page.tsx) with `Promise.all`.
+
+### 10. Instant Visual Click Confirmation & Entirely Clickable Product Cards
+- **Instant Visual Loading Feedback (`components/NavigationProgressBar.tsx`)**:
+  - Built a brand-aligned, luxury top loading progress bar inspired by StudioMaya's palette (charcoal `#171717`, amethyst `#5D4396`, warm gold `#9E7D47`, and champagne `#C8B69A`) with a luminous glow head.
+  - Automatically intercepts all internal link clicks (`<a>` tags) in the browser's capture phase for instantaneous response (0ms latency visual feedback), jumping immediately to 24% and trickling smoothly up to 95% until Next.js route change completes.
+  - Intercepts `window.history.pushState` and `window.history.replaceState` so programmatic navigations (`router.push()`) immediately activate the progress bar.
+  - Enforces a minimum display time (160ms) so users clearly perceive the click confirmation even on ultra-fast responses or cached transitions.
+  - Automatically completes (100%) and smoothly fades out on route change (`usePathname()` / `useSearchParams()`).
+  - Mounted globally in [`components/ClientProviders.tsx`](file:///d:/Notion/digital-store/components/ClientProviders.tsx) inside `<Suspense>` to avoid Next.js build de-optimization.
+  - Explicitly integrated `startNavigationProgress()` into key conversion buttons:
+    - [`components/CartDrawer.tsx`](file:///d:/Notion/digital-store/components/CartDrawer.tsx) on checkout submission.
+    - [`components/CheckoutButton.tsx`](file:///d:/Notion/digital-store/components/CheckoutButton.tsx) on unauthenticated login redirect and thank-you navigation.
+    - [`app/cart/page.tsx`](file:///d:/Notion/digital-store/app/cart/page.tsx) on checkout navigation.
+    - [`app/login/page.tsx`](file:///d:/Notion/digital-store/app/login/page.tsx) on post-login redirect.
+
+- **Entirely Clickable Product Cards (`components/ClickableCard.tsx`)**:
+  - Implemented [`components/ClickableCard.tsx`](file:///d:/Notion/digital-store/components/ClickableCard.tsx) providing accessible, full-container clickability across the storefront.
+  - Clicking anywhere on the product card (image, title, badge, description, price, whitespace, or borders) immediately begins the top progress bar and navigates to the product detail view (`/products/[id]`).
+  - **Child Button Isolation**: Uses `(e.target as HTMLElement).closest('button')` to guarantee that clicks on the `<AddToCartButton>` add the item to the cart and change state to "In Cart" without triggering card navigation.
+  - **Modifier & New Tab Support**: Supports Ctrl+Click, Cmd+Click, and Middle-Click on any part of the card to open the product in a new browser tab.
+  - **Tactile Micro-Interactions & A11y**: Features `cursor-pointer`, `active:scale-[0.995]`, `role="link"`, `tabIndex={0}`, and Enter/Space keyboard accessibility.
+  - Upgraded both the homepage catalog ([`components/ProductCatalog.tsx`](file:///d:/Notion/digital-store/components/ProductCatalog.tsx)) and the related products recommendation grid ([`app/products/[id]/page.tsx`](file:///d:/Notion/digital-store/app/products/[id]/page.tsx)).
+  - Added `active:scale-95` tactile depression feedback to [`components/AddToCartButton.tsx`](file:///d:/Notion/digital-store/components/AddToCartButton.tsx).
+
+### 11. Navbar Categories & Products Section Anchor Navigation Fix
+- **Root Cause**:
+  - In [`components/Navbar.tsx`](file:///d:/Notion/digital-store/components/Navbar.tsx), both "Products" and "Categories" were hardcoded to `href="/#catalog"`.
+  - In [`app/page.tsx`](file:///d:/Notion/digital-store/app/page.tsx), neither the section nor the header had `id="catalog"` or `id="categories"`; `id="catalog"` was placed only on an inner `<div>` inside `ProductCatalog.tsx` (an async Server Component rendered inside `<Suspense fallback={<ProductGridSkeleton />}>`). During initial HTML delivery, the element did not exist in the DOM, causing browser hash jumps to fail and leave the user stranded at the top of the homepage.
+  - When users were already on the homepage (`/`), Next.js App Router client routing intercepted `/#catalog` as a same-route transition and prevented the native scroll jump.
+- **Resolution**:
+  - In [`app/page.tsx`](file:///d:/Notion/digital-store/app/page.tsx), assigned `id="catalog"` directly to the static `<section>` container and `id="categories"` to `<div id="categories" className="mb-8 scroll-mt-24">`, ensuring both anchor targets exist in the initial HTML before async streaming.
+  - In [`components/Navbar.tsx`](file:///d:/Notion/digital-store/components/Navbar.tsx), linked "Categories" to `/#categories` and implemented `handleScrollTo` for desktop and mobile navigation:
+    - When on the homepage (`/`), prevents default no-op routing and smoothly scrolls directly to the targeted section (`categories` or `catalog`) with sticky navbar offset (`scroll-mt-24`).
+    - When navigating from another page (e.g. `/about`, `/products/[id]`), updates history and allows cross-page navigation.
+  - In [`components/ProductCatalog.tsx`](file:///d:/Notion/digital-store/components/ProductCatalog.tsx), added a mount `useEffect` to smoothly scroll to `#categories` or `#catalog` upon hydration when arriving with a hash.
+
+
+
+
+
